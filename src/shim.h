@@ -11,16 +11,37 @@
 
 #define MAXEVENTS 256
 
-/* Code adopted from https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/ */
+#define DEBUG
+#ifdef DEBUG
+#define DBG_PRINT(msg, args...) printf("[dbg] " msg, args)
+#else
+#define DBG_PRINT(msg, args...) ;
+#endif
+
+typedef enum {CLIENT_LISTENER = 1, SERVER_LISTENER = 2}  event_t;
+
+struct connection_info;
 
 struct event_data {
-	int client_listen_fd;
-	int server_connect_fd;
+	event_t type;
+	int listen_fd;
+	int send_fd;
+	struct connection_info *conn_info;
+};
+
+struct connection_info {
+	struct event_data *client_ev_data;
+	struct event_data *server_ev_data;
 };
 
 
 int make_socket_non_blocking(int sfd);
 int create_and_bind(char *port);
 int create_and_connect(char *port);
-void free_epoll_event_data(struct epoll_event *ev);
+void free_connection_info(struct connection_info *ci);
 int sendall(int sockfd, const void *buf, size_t len);
+
+void handle_event(int efd, struct epoll_event *ev, int sfd);
+int handle_client_event(struct epoll_event *ev);
+int handle_server_event(struct epoll_event *ev);
+void handle_new_connection(int efd, struct epoll_event *ev, int sfd);

@@ -5,7 +5,7 @@ CFLAGS = -Wall -g
 
 all: shim
 
-shim: shim.c
+shim: shim.c shim.h
 
 clean:
 	rm -f *.o $(BIN)
