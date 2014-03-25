@@ -49,7 +49,7 @@ void bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
     memcpy(ba->data + ba->len, data, len);
 }
 
-void bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
+static void bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back) {
     if (ba == NULL) {
         fprintf(stderr, "Tried to truncate null bytearray\n");
         abort();
@@ -60,6 +60,16 @@ void bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
     }
 
     size_t new_len = ba->len - trunc_amt;
-    memmove(ba->data, ba->data + trunc_amt, new_len);
+    if (!from_back) {
+        memmove(ba->data, ba->data + trunc_amt, new_len);
+    }
     ba->len = new_len;
+}
+
+void bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
+    bytearray_truncate(ba, trunc_amt, 0);
+}
+
+void bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
+    bytearray_truncate(ba, trunc_amt, 1);
 }

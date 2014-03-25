@@ -1,3 +1,6 @@
+#ifndef SHIM_H
+#define SHIM_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +11,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <errno.h>
+#include "bytearray.h"
 
 #define MAXEVENTS 256
 
@@ -18,7 +22,8 @@
 #define DBG_PRINT(msg, args...) ;
 #endif
 
-typedef enum {CLIENT_LISTENER = 1, SERVER_LISTENER = 2}  event_t;
+typedef enum {CLIENT_LISTENER = 1, SERVER_LISTENER = 2} event_t;
+typedef enum {WAITING_FOR_HEADER = 1, WAITING_FOR_BODY = 2} conn_state_t;
 
 struct connection_info;
 
@@ -26,6 +31,7 @@ struct event_data {
 	event_t type;
 	int listen_fd;
 	int send_fd;
+	conn_state_t state;
 	struct connection_info *conn_info;
 };
 
@@ -45,3 +51,5 @@ void handle_event(int efd, struct epoll_event *ev, int sfd);
 int handle_client_event(struct epoll_event *ev);
 int handle_server_event(struct epoll_event *ev);
 void handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+
+#endif

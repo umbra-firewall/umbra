@@ -227,11 +227,13 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd)
         client_event_data->type = CLIENT_LISTENER;
         client_event_data->listen_fd = infd;
         client_event_data->send_fd = outfd;
+        client_event_data->state = WAITING_FOR_HEADER;
         client_event_data->conn_info = conn_info;
 
         server_event_data->type = SERVER_LISTENER;
         server_event_data->listen_fd = outfd;
         server_event_data->send_fd = infd;
+        server_event_data->state = WAITING_FOR_HEADER;
         server_event_data->conn_info = conn_info;
 
         client_event.data.ptr = client_event_data;
