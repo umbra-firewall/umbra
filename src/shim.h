@@ -15,7 +15,7 @@
 
 #define MAXEVENTS 256
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 #define DBG_PRINT(msg, args...) printf("[dbg] " msg, args)
 #else
@@ -23,7 +23,7 @@
 #endif
 
 typedef enum {CLIENT_LISTENER = 1, SERVER_LISTENER = 2} event_t;
-typedef enum {WAITING_FOR_HEADER = 1, WAITING_FOR_BODY = 2} conn_state_t;
+typedef enum {WAITING_FOR_FLINE, WAITING_FOR_HEADER, WAITING_FOR_BODY} conn_state_t;
 
 struct connection_info;
 

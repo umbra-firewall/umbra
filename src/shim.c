@@ -282,6 +282,7 @@ int handle_client_event(struct epoll_event *ev)
             break;
         }
 
+#ifdef DEBUG
         /* Write the buffer to standard output */
         s = write(1, ">> ", 3);
         s = write(1, buf, count);
@@ -289,6 +290,7 @@ int handle_client_event(struct epoll_event *ev)
             perror("write");
             abort();
         }
+#endif
 
         sendall(((struct event_data *) ev->data.ptr)->send_fd,
                 buf, count);
@@ -323,6 +325,7 @@ int handle_server_event(struct epoll_event *ev)
             break;
         }
 
+#ifdef DEBUG
         /* Write the buffer to standard output */
         s = write(1, "<< ", 3);
         s = write(1, buf, count);
@@ -330,6 +333,7 @@ int handle_server_event(struct epoll_event *ev)
             perror("write");
             abort();
         }
+#endif
 
         sendall(((struct event_data *) ev->data.ptr)->send_fd,
                 buf, count);
