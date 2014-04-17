@@ -17,7 +17,7 @@ typedef struct {
 
 bytearray_t* new_bytearray();
 void bytearray_free(bytearray_t *ba);
-void bytearray_append(bytearray_t *ba, uint8_t *data, size_t len);
+int bytearray_append(bytearray_t *ba, uint8_t *data, size_t len);
 void bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt);
 void bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt);
 

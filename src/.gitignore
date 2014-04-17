@@ -1,2 +1,6 @@
+*.pyc
+*.o
 shim
 shim-release
+shim-trace
+shim-dbg

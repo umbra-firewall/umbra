@@ -1,10 +1,9 @@
 #include "shim.h"
 
 int connction_num = 0;
-char *shim_port_str, *server_port_str;
+char *http_port_str, *server_http_port_str;
 
-int make_socket_non_blocking(int sfd)
-{
+int make_socket_non_blocking(int sfd) {
     int flags, s;
 
     flags = fcntl(sfd, F_GETFL, 0);
@@ -14,7 +13,7 @@ int make_socket_non_blocking(int sfd)
     }
 
     flags |= O_NONBLOCK;
-    s = fcntl (sfd, F_SETFL, flags);
+    s = fcntl(sfd, F_SETFL, flags);
     if (s == -1) {
         perror("fcntl");
         return -1;
@@ -23,21 +22,20 @@ int make_socket_non_blocking(int sfd)
     return 0;
 }
 
-int create_and_bind(char *port)
-{
+int create_and_bind(char *port) {
     struct addrinfo hints;
     struct addrinfo *result, *rp;
     int s, sfd;
-    int yes=1;
+    int yes = 1;
 
     memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;     /* Return IPv4 and IPv6 choices */
+    hints.ai_family = AF_UNSPEC; /* Return IPv4 and IPv6 choices */
     hints.ai_socktype = SOCK_STREAM; /* We want a TCP socket */
-    hints.ai_flags = AI_PASSIVE;     /* All interfaces */
+    hints.ai_flags = AI_PASSIVE; /* All interfaces */
 
     s = getaddrinfo(NULL, port, &hints, &result);
     if (s != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror (s));
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
         return -1;
     }
 
@@ -47,7 +45,8 @@ int create_and_bind(char *port)
             continue;
         }
 
-        if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+        if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int))
+                == -1) {
             perror("setsockopt");
             exit(1);
         }
@@ -58,7 +57,7 @@ int create_and_bind(char *port)
             break;
         }
 
-        close (sfd);
+        close(sfd);
     }
 
     if (rp == NULL) {
@@ -71,8 +70,7 @@ int create_and_bind(char *port)
     return sfd;
 }
 
-int create_and_connect(char *port)
-{
+int create_and_connect(char *port) {
     int sockfd, rv;
     struct addrinfo hints, *servinfo, *p;
 
@@ -87,8 +85,8 @@ int create_and_connect(char *port)
 
     // loop through all the results and connect to the first we can
     for (p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype,
-                             p->ai_protocol)) == -1) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol))
+                == -1) {
             perror("socket");
             continue;
         }
@@ -112,21 +110,18 @@ int create_and_connect(char *port)
     return sockfd;
 }
 
-void free_connection_info(struct connection_info *ci)
-{
+void free_connection_info(struct connection_info *ci) {
     DBG_PRINT("Freeing conn info %p\n", ci);
     if (ci != NULL) {
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
             if (listen_fd && close(listen_fd)) {
                 perror("close");
-                abort();
             }
 
             int send_fd = ci->client_ev_data->send_fd;
             if (send_fd && close(send_fd)) {
                 perror("close");
-                abort();
             }
             free(ci->client_ev_data);
         }
@@ -138,14 +133,13 @@ void free_connection_info(struct connection_info *ci)
     }
 }
 
-int sendall(int sockfd, const void *buf, size_t len)
-{
+int sendall(int sockfd, const void *buf, size_t len) {
     int sent_bytes;
     while (len > 0) {
         sent_bytes = send(sockfd, buf, len, 0);
         if (sent_bytes < 0) {
             perror("send");
-            abort();
+            return -1;
         }
         buf += sent_bytes;
         len -= sent_bytes;
@@ -153,8 +147,7 @@ int sendall(int sockfd, const void *buf, size_t len)
     return 0;
 }
 
-void handle_new_connection(int efd, struct epoll_event *ev, int sfd)
-{
+void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     int s;
     struct epoll_event client_event, server_event;
     struct event_data *client_event_data, *server_event_data;
@@ -169,10 +162,9 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd)
         in_len = sizeof(in_addr);
         infd = accept(sfd, &in_addr, &in_len);
         if (infd == -1) {
-            if ((errno == EAGAIN) ||
-                    (errno == EWOULDBLOCK)) {
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                 /* We have processed all incoming
-                   connections. */
+                 connections. */
                 break;
             } else {
                 perror("accept");
@@ -180,25 +172,32 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd)
             }
         }
 
-        s = getnameinfo(&in_addr, in_len,
-                        hbuf, sizeof(hbuf),
-                        sbuf, sizeof(sbuf),
-                        NI_NUMERICHOST | NI_NUMERICSERV);
+        s = getnameinfo(&in_addr, in_len, hbuf, sizeof(hbuf), sbuf,
+                sizeof(sbuf),
+                NI_NUMERICHOST | NI_NUMERICSERV);
         if (s == 0) {
-            printf("Accepted connection on descriptor %d "
-                   "(host=%s, port=%s)\n", infd, hbuf, sbuf);
+            DBG_PRINT(
+                    "Accepted connection on descriptor %d " "(host=%s, port=%s)\n",
+                    infd, hbuf, sbuf);
         }
 
         /* Make the incoming socket non-blocking and add it to the
-           list of fds to monitor. */
+         list of fds to monitor. */
         s = make_socket_non_blocking(infd);
         if (s < 0) {
+            fprintf(stderr, "Could not make new socket non-blocking\n");
             abort();
         }
 
         /* Create proxy socket to server */
-        outfd = create_and_connect(server_port_str);
+        outfd = create_and_connect(server_http_port_str);
         if (outfd < 0) {
+            abort();
+        }
+
+        s = make_socket_non_blocking(outfd);
+        if (s < 0) {
+            fprintf(stderr, "Could not make forward socket non-blocking\n");
             abort();
         }
 
@@ -256,8 +255,7 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd)
     }
 }
 
-int handle_client_event(struct epoll_event *ev)
-{
+int handle_client_event(struct epoll_event *ev) {
     int s;
     int done = 0;
 
@@ -265,11 +263,11 @@ int handle_client_event(struct epoll_event *ev)
         ssize_t count;
         char buf[1024];
 
-        count = read(((struct event_data *) ev->data.ptr)->listen_fd,
-                     buf, sizeof(buf));
+        count = read(((struct event_data *) ev->data.ptr)->listen_fd, buf,
+                sizeof(buf));
         if (count == -1) {
             /* If errno == EAGAIN, that means we have read all
-               data. So go back to the main loop. */
+             data. So go back to the main loop. */
             if (errno != EAGAIN) {
                 perror("read");
                 done = 1;
@@ -277,30 +275,31 @@ int handle_client_event(struct epoll_event *ev)
             break;
         } else if (count == 0) {
             /* End of file. The remote has closed the
-               connection. */
+             connection. */
             done = 1;
             break;
         }
 
-#ifdef DEBUG
+#ifdef PRINT_CONVERSATION
         /* Write the buffer to standard output */
         s = write(1, ">> ", 3);
         s = write(1, buf, count);
         if (s == -1) {
             perror("write");
-            abort();
         }
 #endif
 
-        sendall(((struct event_data *) ev->data.ptr)->send_fd,
-                buf, count);
+        s = sendall(((struct event_data *) ev->data.ptr)->send_fd, buf, count);
+        if (s < 0) {
+            done = 1;
+            break;
+        }
     }
 
     return done;
 }
 
-int handle_server_event(struct epoll_event *ev)
-{
+int handle_server_event(struct epoll_event *ev) {
     int s;
     int done = 0;
 
@@ -308,11 +307,11 @@ int handle_server_event(struct epoll_event *ev)
         ssize_t count;
         char buf[1024];
 
-        count = read(((struct event_data *) ev->data.ptr)->listen_fd,
-                     buf, sizeof(buf));
+        count = read(((struct event_data *) ev->data.ptr)->listen_fd, buf,
+                sizeof(buf));
         if (count == -1) {
             /* If errno == EAGAIN, that means we have read all
-               data. So go back to the main loop. */
+             data. So go back to the main loop. */
             if (errno != EAGAIN) {
                 perror("read");
                 done = 1;
@@ -320,53 +319,53 @@ int handle_server_event(struct epoll_event *ev)
             break;
         } else if (count == 0) {
             /* End of file. The remote has closed the
-               connection. */
+             connection. */
             done = 1;
             break;
         }
 
-#ifdef DEBUG
+#ifdef PRINT_CONVERSATION
         /* Write the buffer to standard output */
         s = write(1, "<< ", 3);
         s = write(1, buf, count);
         if (s == -1) {
             perror("write");
-            abort();
         }
 #endif
 
-        sendall(((struct event_data *) ev->data.ptr)->send_fd,
-                buf, count);
+        s = sendall(((struct event_data *) ev->data.ptr)->send_fd, buf, count);
+        if (s < 0) {
+            done = 1;
+            break;
+        }
     }
 
     return done;
 }
 
-void handle_event(int efd, struct epoll_event *ev, int sfd)
-{
+void handle_event(int efd, struct epoll_event *ev, int sfd) {
     int done;
 
-    if ((ev->events & EPOLLERR) ||
-            (ev->events & EPOLLHUP) ||
-            (!(ev->events & EPOLLIN))) {
+    if ((ev->events & EPOLLERR) || (ev->events & EPOLLHUP)
+            || (!(ev->events & EPOLLIN))) {
         /* An error has occured on this fd, or the socket is not
-           ready for reading (why were we notified then?) */
+         ready for reading (why were we notified then?) */
         fprintf(stderr, "epoll error\n");
         free_connection_info(((struct event_data *) (ev->data.ptr))->conn_info);
         return;
 
     } else if (sfd == ((struct event_data *) ev->data.ptr)->listen_fd) {
         /* We have a notification on the listening socket, which
-           means one or more incoming connections. */
+         means one or more incoming connections. */
         handle_new_connection(efd, ev, sfd);
         return;
 
     } else if (ev->data.ptr != NULL) {
         /* We have data on the fd waiting to be read. Read and
-           display it. We must read whatever data is available
-           completely, as we are running in edge-triggered mode
-           and won't get a notification again for the same
-           data. */
+         display it. We must read whatever data is available
+         completely, as we are running in edge-triggered mode
+         and won't get a notification again for the same
+         data. */
         struct event_data *ev_data = (struct event_data *) ev->data.ptr;
 
         if (ev_data->type == CLIENT_LISTENER) {
@@ -375,21 +374,21 @@ void handle_event(int efd, struct epoll_event *ev, int sfd)
             done = handle_server_event(ev);
         } else {
             fprintf(stderr, "Invalid event_data type \"%d\"\n", ev_data->type);
-            abort();
+            done = 1;
         }
-
-        DBG_PRINT("done=%d\n", done);
 
         if (done) {
             free_connection_info(ev_data->conn_info);
         }
     }
 
-
 }
 
-int main(int argc, char *argv[])
-{
+void sigint_handler(int dummy) {
+    exit(0);
+}
+
+int main(int argc, char *argv[]) {
     int sfd, s;
     int efd;
     struct epoll_event event;
@@ -398,15 +397,20 @@ int main(int argc, char *argv[])
     memset(&event, 0, sizeof(struct epoll_event));
 
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT \n", argv[0]);
+        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    shim_port_str = argv[1];
-    server_port_str = argv[2];
+    if (signal(SIGINT, sigint_handler) < 0) {
+        perror("signal");
+        abort();
+    }
+
+    http_port_str = argv[1];
+    server_http_port_str = argv[2];
 
     /* Set up listener */
-    sfd = create_and_bind(shim_port_str);
+    sfd = create_and_bind(http_port_str);
     if (sfd == -1) {
         abort();
     }
@@ -422,7 +426,7 @@ int main(int argc, char *argv[])
         abort();
     }
 
-    efd = epoll_create1(0);
+    efd = epoll_create(20);
     if (efd == -1) {
         perror("epoll_create");
         abort();

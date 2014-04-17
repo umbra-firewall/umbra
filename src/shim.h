@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/epoll.h>
 #include <errno.h>
 #include "bytearray.h"
@@ -17,29 +18,33 @@
 
 //#define DEBUG
 #ifdef DEBUG
-#define DBG_PRINT(msg, args...) printf("[dbg] " msg, args)
+#define DBG_PRINT(args...) fprintf(stdout, "[dbg] " args); fflush(stdout)
 #else
 #define DBG_PRINT(msg, args...) ;
 #endif
 
-typedef enum {CLIENT_LISTENER = 1, SERVER_LISTENER = 2} event_t;
-typedef enum {WAITING_FOR_FLINE, WAITING_FOR_HEADER, WAITING_FOR_BODY} conn_state_t;
+typedef enum {
+    CLIENT_LISTENER, SERVER_LISTENER
+} event_t;
+
+typedef enum {
+    WAITING_FOR_FLINE, WAITING_FOR_HEADER, WAITING_FOR_BODY
+} conn_state_t;
 
 struct connection_info;
 
 struct event_data {
-	event_t type;
-	int listen_fd;
-	int send_fd;
-	conn_state_t state;
-	struct connection_info *conn_info;
+    event_t type;
+    int listen_fd;
+    int send_fd;
+    conn_state_t state;
+    struct connection_info *conn_info;
 };
 
 struct connection_info {
-	struct event_data *client_ev_data;
-	struct event_data *server_ev_data;
+    struct event_data *client_ev_data;
+    struct event_data *server_ev_data;
 };
-
 
 int make_socket_non_blocking(int sfd);
 int create_and_bind(char *port);

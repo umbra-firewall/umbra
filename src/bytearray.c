@@ -2,16 +2,16 @@
 
 bytearray_t* new_bytearray() {
     bytearray_t *ba = calloc(1, sizeof(bytearray_t));
-    if (ba  == NULL) {
+    if (ba == NULL) {
         perror("calloc");
-        abort();
+        return NULL;
     }
 
     ba->data = calloc(1, DEFAULT_BYTEARRAY_ALLOC);
     if (ba->data == NULL) {
         free(ba);
         perror("calloc");
-        abort();
+        return NULL;
     }
     ba->len = 0;
     ba->_alloc_len = DEFAULT_BYTEARRAY_ALLOC;
@@ -29,7 +29,9 @@ void bytearray_free(bytearray_t *ba) {
     free(ba);
 }
 
-void bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
+int bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
+    uint8_t *new_data;
+
     if (ba == NULL) {
         fprintf(stderr, "Tried to append null bytearray\n");
         abort();
@@ -39,14 +41,16 @@ void bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
     if (new_len > ba->_alloc_len) {
         /* Realloc more space */
         ba->_alloc_len = new_len;
-        ba->data = realloc(ba->data, ba->_alloc_len);
-        if (ba->data == NULL) {
+        new_data = realloc(ba->data, ba->_alloc_len);
+        if (new_data == NULL) {
             perror("realloc");
-            abort();
+            return -1;
         }
+        ba->data = new_data;
     }
 
     memcpy(ba->data + ba->len, data, len);
+    return 0;
 }
 
 static void bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back) {
