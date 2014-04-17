@@ -17,7 +17,7 @@ release: shim
 shim: CFLAGS := $(CFLAGS_RELEASE)
 
 trace: shim-trace
-shim-trace: shim.c trace.c shim.h
+shim-trace: $(SRC) trace.c
 	$(CC) $(CFLAGS_TRACE) -c shim.c
 	$(CC) -c trace.c
 	$(CC) shim.o trace.o -o shim-trace
