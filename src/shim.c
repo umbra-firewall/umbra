@@ -138,6 +138,9 @@ int sendall(int sockfd, const void *buf, size_t len) {
     while (len > 0) {
         sent_bytes = send(sockfd, buf, len, 0);
         if (sent_bytes < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
             perror("send");
             return -1;
         }
