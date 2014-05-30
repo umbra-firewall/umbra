@@ -12,41 +12,24 @@ class ConfigValidationException(Exception):
     pass
 
 
-def isString(s):
+def is_string(s):
     return isinstance(s, unicode) or isinstance(s, str)
 
 
-def isPage(s):
-    return isString(s) and len(s) > 0 and s[0] == '/'
+def is_page(s):
+    return is_string(s) and len(s) > 0 and s[0] == '/'
 
 
-def isListOf(x, typeFunc, minLen = 0):
+def is_list_of(x, typeFunc, minLen = 0):
     if type(x) is not list:
         return False
     return (reduce(lambda a,b: a and typeFunc(b), x, True)
             and minLen <= len(x))
 
 
-def assertParse(value, msg):
+def assert_parse(value, msg):
     if not value:
         raise ConfigValidationException(msg)
-
-
-def validateCorrectKeys(conf, required, optional=set()):
-    requiredSet, optionalSet = set(required), set(optional)
-    if not requiredSet.isdisjoint(optionalSet):
-        raise Exception("Required and Optional sets must not intersect")
-    allKeys = requiredSet.union(optionalSet)
-    missingReqKeys = requiredSet.copy()
-    
-    for k in conf.keys():
-        assertParse(k in allKeys, "Unknown element '%s'" % k)
-        if k in requiredSet:
-            missingReqKeys.discard(k)
-    
-    assertParse(len(missingReqKeys) == 0,
-            "Configuration does not have required elments %s" %
-            missingReqKeys)
 
 
 class Option:
@@ -71,12 +54,13 @@ class Option:
         return s
     
     def assrt(self, value, msg):
-        assertParse(value, '<' + self.getDesc() + '>:\n' + msg)
+        assert_parse(value, '<' + self.getDesc() + '>:\n' + msg)
 
 
 class BoolOption(Option):
     def validate(self):
-        self.assrt(isinstance(self.value, bool), 'Invalid Boolean value "%s"' % repr(self.value))
+        self.assrt(isinstance(self.value, bool), 'Invalid Boolean value "%s"' %
+                   repr(self.value))
 
 
 class PosIntOption(Option):
@@ -88,25 +72,29 @@ class PosIntOption(Option):
 
 class StringOption(Option):
     def validate(self):
-        self.assrt(isString(self.value), 'Value "%s" is not string' % repr(self.value))
+        self.assrt(is_string(self.value), 'Value "%s" is not string' %
+                   repr(self.value))
 
 
 class StringArrOption(Option):
-    def __init__(self, name, default=[], minLen=0, allowedVals=None, isElementValid=None):
+    def __init__(self, name, default=[], minLen=0, allowedVals=None,
+                 isElementValid=None):
         Option.__init__(self, name, default)
         self.allowedVals = allowedVals
         self.minLen = minLen
         self.isElementValid = isElementValid
 
     def validate(self):
-        self.assrt(isListOf(self.value, isString, self.minLen), 'Must be list')
+        self.assrt(is_list_of(self.value, is_string, self.minLen),
+                   'Must be list')
         if self.allowedVals != None:
             self.assrt(set(self.value).issubset(self.allowedVals),
                        'Elements must be in allowed set: %s' %
                            repr(self.allowedVals))
         if self.isElementValid != None:
             for x in self.value:
-                self.assrt(self.isElementValid(x), 'Invalid element "%s"' % repr(x))
+                self.assrt(self.isElementValid(x), 'Invalid element "%s"' %
+                           repr(x))
 
 
 class MultiOption(Option):
@@ -122,7 +110,8 @@ class MultiOption(Option):
 
     def validate(self):
         for x in self.requiredConf:
-            self.assrt(x.valueHasBeenSet, 'Option %s has not been specified' % x.name)
+            self.assrt(x.valueHasBeenSet, 'Option %s has not been specified' %
+                       x.name)
             x.validate()
         for x in self.optionalConf:
             if x.valueHasBeenSet:
@@ -162,14 +151,16 @@ class NamedOptionSet(MultiOption):
 class PageConfOption(NamedOptionSet):
     def validate(self):
         for path,page_conf in self.suboptions.items():
-            self.assrt(isPage(path), 'Path "%s" is not valid, must start with a "/"' % path)
+            self.assrt(is_page(path),
+                       'Path "%s" is not valid, must start with a "/"' % path)
             page_conf.validate()
 
 
 class ParamsOption(NamedOptionSet):
      def validate(self):
          for param,param_conf in self.suboptions.items():
-            self.assrt(isString(param), 'Param "%s" is not valid, must be string' % param)
+            self.assrt(is_string(param),
+                       'Param "%s" is not valid, must be string' % param)
             param_conf.validate()
 
 
@@ -203,14 +194,15 @@ global_conf_required = {
 global_conf_optional = set()
 
 toplevel_conf = MultiOption('toplevel', {
-        MultiOption('global_config', global_conf_required, global_conf_optional),
+        MultiOption('global_config', global_conf_required,
+                    global_conf_optional),
         PageConfOption('page_config', page_conf_required, page_conf_optional)
         }, set())
 
 
-def parseConfig(configFile, outputHeader):
-    print 'Parsing config file "%s"' % configFile
-    with open(configFile, 'r') as f:
+def parse_config(config_file, output_header):
+    print 'Parsing config file "%s"' % config_file
+    with open(config_file, 'r') as f:
         conf = json.load(f)
         toplevel_conf.setValue(conf)
     toplevel_conf.validate()
@@ -221,8 +213,8 @@ def main():
     if len(sys.argv) != 3:
         print 'Usage: %s CONFIG OUTPUT_HEADER' % sys.argv[0]
         sys.exit(1)
-    configFile, outputHeader = tuple(sys.argv[1:])
-    parseConfig(configFile, outputHeader)
+    config_file, output_header = tuple(sys.argv[1:])
+    parse_config(config_file, output_header)
 
 
 if __name__ == '__main__':
