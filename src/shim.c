@@ -1,5 +1,8 @@
 #include "shim.h"
 
+// Include dynamic configuration
+#include "config_header.h"
+
 int connction_num = 0;
 char *http_port_str, *server_http_port_str;
 

@@ -1,0 +1,58 @@
+{
+    "global_config": {
+        "https_certificate": "/etc/httpd/ssl/cert.crt",
+        "https_private_key": "/etc/httpd/ssl/key.pem",
+        "successful_login_pages":
+          ["/login.html", "/login-successful.html"]
+    },
+    
+    "page_config": {
+        "/": {
+            "request_types": ["GET", "HEAD"],
+            "params_allowed": false,
+            "max_header_field_len": 80,
+            "max_header_len": 1024,
+            "max_post_payload_len": 4096
+        },
+        
+        "/index.html": {
+            "requires_login": false
+        },
+        
+        "/images": {
+            "requires_login": false
+        },
+
+        "/cgi-bin": {
+            "request_types": ["POST"],
+            "params_allowed": true,
+            "max_param_len": 25
+        },
+        
+        "/cgi-bin/login": {
+            "request_types": ["GET", "POST", "HEAD"],
+            "requires_login": false,
+            "params": {
+                "user": {
+                    "whitelist": "[a-z0-9_]"
+                },
+                "passwd": {
+                    "max_param_len": 30,
+                    "whitelist": "[a-zA-Z0-9_]"
+                }
+            }
+        },
+        
+        "/cgi-bin/*-upload": {
+            "params": {
+                "file": {
+                    "max_param_len": 1e6
+                },
+                
+                "base64_data": {
+                    "whitelist": "[A-Za-z0-9\\+/=]"
+                }
+            }
+        }
+    }
+}
