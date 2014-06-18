@@ -4,4 +4,5 @@ shim
 shim-release
 shim-trace
 shim-dbg
+config_printer
 config_header.h

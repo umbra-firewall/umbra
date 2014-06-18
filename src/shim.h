@@ -31,6 +31,14 @@ typedef enum {
     WAITING_FOR_FLINE, WAITING_FOR_HEADER, WAITING_FOR_BODY
 } conn_state_t;
 
+#define HTTP_REQ_HEAD (1 << 0)
+#define HTTP_REQ_GET (1 << 1)
+#define HTTP_REQ_POST (1 << 2)
+#define HTTP_REQ_PUT (1 << 3)
+#define HTTP_REQ_DELETE (1 << 4)
+#define HTTP_REQ_TRACE (1 << 5)
+#define HTTP_REQ_CONNECT (1 << 6)
+
 struct connection_info;
 
 struct event_data {

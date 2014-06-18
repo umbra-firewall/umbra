@@ -1,6 +1,6 @@
 BIN_NORMAL = shim shim-dbg
-BIN = $(BIN_NORMAL) shim-trace
-SRC = shim.c shim.h bytearray.c bytearray.h
+BIN = $(BIN_NORMAL) shim-trace config_printer
+SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c
 SHIM_SRC = shim.c shim.h config_header.h
 
 # Set CROSS_COMPILE variable if needed when running make
@@ -33,6 +33,8 @@ shim-trace: $(SHIM_SRC) trace.c
 
 $(BIN_NORMAL): $(SHIM_SRC)
 	$(CC) $(CFLAGS) $< -o $@
+
+config_printer: config_printer.c config_header.h
 
 clean:
 	rm -f *.o $(BIN) config_header.h
