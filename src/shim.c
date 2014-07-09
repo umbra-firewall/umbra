@@ -6,6 +6,102 @@
 int connction_num = 0;
 char *http_port_str, *server_http_port_str;
 
+char *error_page_buf = NULL;
+size_t error_page_len;
+
+bool sigint_received = false;
+
+int num_conn_infos = 0;// DEBUG
+
+http_parser_settings parser_settings = {
+    .on_message_begin = on_message_begin_cb,
+    .on_url = on_url_cb,
+
+#if ENABLE_HEADER_FIELD_CHECK
+    .on_header_field = on_header_field_cb,
+#else
+    .on_header_field = NULL,
+#endif
+
+#if ENABLE_HEADER_VALUE_CHECK
+    .on_header_value = on_header_value_cb,
+#else
+    .on_header_value = NULL,
+#endif
+
+    .on_headers_complete = on_headers_complete_cb,
+    .on_body = on_body_cb,
+    .on_message_complete = on_message_complete_cb
+};
+
+/* Callbacks for HTTP requests and responses */
+
+void cancel_connection(http_parser *p) {
+    struct event_data *ev_data = (struct event_data *) p->data;
+    ev_data->is_cancelled = true;
+}
+
+bool is_conn_cancelled(struct event_data *ev_data) {
+    if (ev_data->is_cancelled) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+int on_message_begin_cb(http_parser* p) {
+    log_trace("***MESSAGE BEGIN***\n");
+    return 0;
+}
+
+int on_headers_complete_cb(http_parser* p) {
+    log_trace("***HEADERS COMPLETE***\n");
+    struct event_data *ev_data = (struct event_data *) p->data;
+    ev_data->state = WAITING_FOR_BODY;
+    return 0;
+}
+
+int on_message_complete_cb(http_parser* p) {
+    log_trace("***MESSAGE COMPLETE***\n");
+    struct event_data *ev_data = (struct event_data *) p->data;
+    ev_data->state = MESSAGE_COMPLETE;
+    return 0;
+}
+
+int on_url_cb(http_parser* p, const char* at, size_t length) {
+    log_trace("Url: %.*s\n", (int)length, at);
+    struct event_data *ev_data = (struct event_data *) p->data;
+    ev_data->state = WAITING_FOR_HEADER;
+    return 0;
+}
+
+int on_header_field_cb(http_parser* p, const char* at, size_t length) {
+    //log_trace("Header field: %.*s\n", (int)length, at);
+    if (length > MAX_HEADER_FIELD_LEN) {
+        log_info("Blocked request because header field length %ld; "
+                "max is %ld\n",
+                length, (long ) MAX_HEADER_FIELD_LEN);
+        cancel_connection(p);
+    }
+    return 0;
+}
+
+int on_header_value_cb(http_parser* p, const char* at, size_t length) {
+    //log_trace("Header value: %.*s\n", (int)length, at);
+    if (length > MAX_HEADER_VALUE_LEN) {
+        log_info("Blocked request because header value length %ld; "
+                "max is %ld\n",
+                length, (long ) MAX_HEADER_VALUE_LEN);
+        cancel_connection(p);
+    }
+    return 0;
+}
+
+int on_body_cb(http_parser* p, const char* at, size_t length) {
+    log_trace("Body: %.*s\n", (int)length, at);
+    return 0;
+}
+
 int make_socket_non_blocking(int sfd) {
     int flags, s;
 
@@ -114,7 +210,7 @@ int create_and_connect(char *port) {
 }
 
 void free_connection_info(struct connection_info *ci) {
-    DBG_PRINT("Freeing conn info %p\n", ci);
+    log_dbg("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
     if (ci != NULL) {
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
@@ -153,10 +249,65 @@ int sendall(int sockfd, const void *buf, size_t len) {
     return 0;
 }
 
+struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
+        enum http_parser_type parser_type, struct connection_info *conn_info) {
+
+    struct event_data *ev_data = calloc(1, sizeof(struct event_data));
+
+    if (ev_data != NULL) {
+        ev_data->type = type;
+        ev_data->listen_fd = listen_fd;
+        ev_data->send_fd = send_fd;
+        ev_data->state = WAITING_FOR_HEADER;
+        ev_data->is_cancelled = false;
+        ev_data->conn_info = conn_info;
+
+        http_parser_init(&ev_data->parser, parser_type);
+        ev_data->parser.data = ev_data;
+    }
+
+    return ev_data;
+}
+
+
+
+struct connection_info *init_conn_info(int infd, int outfd) {
+    struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
+    struct connection_info *conn_info = NULL;
+    num_conn_infos++;
+    log_dbg("init_conn_info() (%d total)\n", num_conn_infos);
+
+    conn_info = calloc(1, sizeof(struct connection_info));
+    if (conn_info == NULL) {
+        goto fail;
+    }
+
+    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, HTTP_REQUEST, conn_info);
+    if (client_ev_data == NULL) {
+        goto fail;
+    }
+
+    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, HTTP_RESPONSE, conn_info);
+    if (server_ev_data == NULL) {
+        goto fail;
+    }
+
+    conn_info->client_ev_data = client_ev_data;
+    conn_info->server_ev_data = server_ev_data;
+
+    return conn_info;
+
+fail:
+    num_conn_infos--;
+    free(client_ev_data);
+    free(server_ev_data);
+    free(conn_info);
+    return NULL;
+}
+
 void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     int s;
     struct epoll_event client_event, server_event;
-    struct event_data *client_event_data, *server_event_data;
     struct connection_info *conn_info;
 
     while (1) {
@@ -182,7 +333,7 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
                 sizeof(sbuf),
                 NI_NUMERICHOST | NI_NUMERICSERV);
         if (s == 0) {
-            DBG_PRINT(
+            log_dbg(
                     "Accepted connection on descriptor %d " "(host=%s, port=%s)\n",
                     infd, hbuf, sbuf);
         }
@@ -208,43 +359,16 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         }
 
         /* Allocate data */
-        client_event_data = calloc(1, sizeof(struct event_data));
-        if (client_event_data == NULL) {
-            perror("calloc");
+        conn_info = init_conn_info(infd, outfd);
+        if (conn_info == NULL) {
+            puts("init_conn_info() failed");
             abort();
         }
 
-        server_event_data = calloc(1, sizeof(struct event_data));
-        if (server_event_data == NULL) {
-            perror("calloc");
-            abort();
-        }
-
-        conn_info = calloc(1, sizeof(struct connection_info));
-        if (server_event_data == NULL) {
-            perror("calloc");
-            abort();
-        }
-
-        conn_info->client_ev_data = client_event_data;
-        conn_info->server_ev_data = server_event_data;
-
-        client_event_data->type = CLIENT_LISTENER;
-        client_event_data->listen_fd = infd;
-        client_event_data->send_fd = outfd;
-        client_event_data->state = WAITING_FOR_HEADER;
-        client_event_data->conn_info = conn_info;
-
-        server_event_data->type = SERVER_LISTENER;
-        server_event_data->listen_fd = outfd;
-        server_event_data->send_fd = infd;
-        server_event_data->state = WAITING_FOR_HEADER;
-        server_event_data->conn_info = conn_info;
-
-        client_event.data.ptr = client_event_data;
+        client_event.data.ptr = conn_info->client_ev_data;
         client_event.events = EPOLLIN | EPOLLET;
 
-        server_event.data.ptr = server_event_data;
+        server_event.data.ptr = conn_info->server_ev_data;
         server_event.events = EPOLLIN | EPOLLET;
 
         s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &client_event);
@@ -261,16 +385,30 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     }
 }
 
+int send_error_page(int sock) {
+    if (sendall(sock, SIMPLE_HTTP_RESPONSE, sizeof(SIMPLE_HTTP_RESPONSE)) < 0) {
+        return -1;
+    }
+    if (sendall(sock, error_page_buf, error_page_len) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/* Handles incoming client requests.
+ * Returns boolean indicated if connection is done */
 int handle_client_event(struct epoll_event *ev) {
     int s;
     int done = 0;
+    size_t nparsed;
+    ssize_t count;
+    char buf[READ_BUF_SIZE];
 
-    while (1) {
-        ssize_t count;
-        char buf[1024];
+    struct event_data *ev_data = (struct event_data *) ev->data.ptr;
 
-        count = read(((struct event_data *) ev->data.ptr)->listen_fd, buf,
-                sizeof(buf));
+    while (!done) {
+        count = read(ev_data->listen_fd, buf,
+                READ_BUF_SIZE);
         if (count == -1) {
             /* If errno == EAGAIN, that means we have read all
              data. So go back to the main loop. */
@@ -283,7 +421,6 @@ int handle_client_event(struct epoll_event *ev) {
             /* End of file. The remote has closed the
              connection. */
             done = 1;
-            break;
         }
 
 #ifdef PRINT_CONVERSATION
@@ -295,8 +432,31 @@ int handle_client_event(struct epoll_event *ev) {
         }
 #endif
 
-        s = sendall(((struct event_data *) ev->data.ptr)->send_fd, buf, count);
+        nparsed = http_parser_execute(&ev_data->parser, &parser_settings, buf, count);
+
+        log_dbg("Parsed %ld / %ld bytes\n", nparsed, count);
+
+        if (ev_data->parser.upgrade) {
+            /* Wants to upgrade connection */
+            log_warn("HTTP upgrade not supported");
+            done = 1;
+            break;
+        } else if (is_conn_cancelled(ev_data)) {
+            if (send_error_page(ev_data->listen_fd)) {
+                log_info("Failed to send error page.\n");
+            }
+            close(ev_data->listen_fd);
+            close(ev_data->send_fd);
+            ev_data->listen_fd = 0;
+            ev_data->send_fd = 0;
+            log_info("Closed_connection");
+            done = 1;
+            break;
+        }
+
+        s = sendall(ev_data->send_fd, buf, count);
         if (s < 0) {
+            log_error("sendall failed\n");
             done = 1;
             break;
         }
@@ -311,10 +471,10 @@ int handle_server_event(struct epoll_event *ev) {
 
     while (1) {
         ssize_t count;
-        char buf[1024];
+        char buf[READ_BUF_SIZE];
 
         count = read(((struct event_data *) ev->data.ptr)->listen_fd, buf,
-                sizeof(buf));
+                READ_BUF_SIZE);
         if (count == -1) {
             /* If errno == EAGAIN, that means we have read all
              data. So go back to the main loop. */
@@ -391,7 +551,55 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
 }
 
 void sigint_handler(int dummy) {
-    exit(0);
+    sigint_received = true;
+}
+
+void init_structures(char *error_page_file) {
+    /* Initialize error page foramt */
+    if (error_page_file == NULL) {
+        error_page_len = sizeof(DEFAULT_ERROR_PAGE_STR);
+        error_page_buf = malloc(error_page_len);
+        if (error_page_buf == NULL) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(error_page_buf, DEFAULT_ERROR_PAGE_STR, error_page_len);
+    } else {
+        FILE *f = fopen(error_page_file, "r");
+        if (f == NULL) {
+            log_error("Failed to open error page file \"%s\"\n", error_page_file);
+            perror("fopen");
+            exit(EXIT_FAILURE);
+        }
+        if (fseek(f, 0, SEEK_END) < 0) {
+            perror("fseek");
+            exit(EXIT_FAILURE);
+        }
+        if ((error_page_len = ftell(f)) < 0) {
+            perror("ftell");
+            exit(EXIT_FAILURE);
+        }
+        if (fseek(f, 0, SEEK_SET) < 0) {
+            perror("fseek");
+            exit(EXIT_FAILURE);
+        }
+        error_page_buf = malloc(error_page_len);
+        if (error_page_buf == NULL) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        if (fread(error_page_buf, 1, error_page_len, f) != error_page_len) {
+            perror("fread");
+            exit(EXIT_FAILURE);
+        }
+        if (fclose(f) == EOF) {
+            log_error("Failed to close error page file\n");
+            perror("fclose");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    init_config_vars();
 }
 
 int main(int argc, char *argv[]) {
@@ -399,11 +607,12 @@ int main(int argc, char *argv[]) {
     int efd;
     struct epoll_event event;
     struct epoll_event *events;
+    char *error_page_file = NULL;
 
     memset(&event, 0, sizeof(struct epoll_event));
 
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -414,6 +623,12 @@ int main(int argc, char *argv[]) {
 
     http_port_str = argv[1];
     server_http_port_str = argv[2];
+
+    if (argc == 4) {
+        error_page_file = argv[3];
+    }
+
+    init_structures(error_page_file);
 
     /* Set up listener */
     sfd = create_and_bind(http_port_str);
@@ -452,13 +667,12 @@ int main(int argc, char *argv[]) {
         perror("epoll_ctl");
         abort();
     }
-    memset(&event, 0, sizeof(struct epoll_event));
 
     /* Buffer where events are returned */
-    events = calloc(MAXEVENTS, sizeof(event));
+    events = calloc(MAXEVENTS, sizeof(struct epoll_event));
 
     /* The event loop */
-    while (1) {
+    while (!sigint_received) {
         int n, i;
 
         /* Block indefinitely */
@@ -468,7 +682,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    close(efd);
     free(events);
+    free(event.data.ptr);
+    free(error_page_buf);
 
     close(sfd);
 

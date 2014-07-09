@@ -12,23 +12,37 @@
 #include <signal.h>
 #include <sys/epoll.h>
 #include <errno.h>
+#include <stdbool.h>
+#include "http_parser.h"
 #include "bytearray.h"
 
 #define MAXEVENTS 256
+#define READ_BUF_SIZE 4096
+
+#define TRACE
+#ifdef TRACE
+#define log_trace(args...) fprintf(stdout, "[trace] " args); fflush(stdout)
+#else
+#define log_trace(msg, args...) ;
+#endif
 
 //#define DEBUG
 #ifdef DEBUG
-#define DBG_PRINT(args...) fprintf(stdout, "[dbg] " args); fflush(stdout)
+#define log_dbg(args...) fprintf(stdout, "[ dbg ] " args); fflush(stdout)
 #else
-#define DBG_PRINT(msg, args...) ;
+#define log_dbg(msg, args...) ;
 #endif
+
+#define log_warn(args...) fprintf(stderr, "[warn ] " args); fflush(stdout)
+#define log_info(args...) fprintf(stderr, "[info ] " args); fflush(stdout)
+#define log_error(args...) fprintf(stderr, "[error] " args); fflush(stdout)
 
 typedef enum {
     CLIENT_LISTENER, SERVER_LISTENER
 } event_t;
 
 typedef enum {
-    WAITING_FOR_FLINE, WAITING_FOR_HEADER, WAITING_FOR_BODY
+    WAITING_FOR_URL, WAITING_FOR_HEADER, WAITING_FOR_BODY, MESSAGE_COMPLETE
 } conn_state_t;
 
 #define HTTP_REQ_HEAD (1 << 0)
@@ -42,11 +56,13 @@ typedef enum {
 struct connection_info;
 
 struct event_data {
-    event_t type;
     int listen_fd;
     int send_fd;
-    conn_state_t state;
+    http_parser parser;
     struct connection_info *conn_info;
+    event_t type : 8;
+    conn_state_t state : 8;
+    bool is_cancelled : 1;
 };
 
 struct connection_info {
@@ -64,5 +80,33 @@ void handle_event(int efd, struct epoll_event *ev, int sfd);
 int handle_client_event(struct epoll_event *ev);
 int handle_server_event(struct epoll_event *ev);
 void handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+void init_structures(char *error_page_file);
+struct connection_info *init_conn_info(int infd, int outfd);
+
+/* HTTP parser callbacks */
+int on_message_begin_cb(http_parser *p);
+int on_headers_complete_cb(http_parser *p);
+int on_message_complete_cb(http_parser *p);
+int on_url_cb(http_parser *p, const char *at, size_t length);
+int on_header_field_cb(http_parser *p, const char *at, size_t length);
+int on_header_value_cb(http_parser *p, const char *at, size_t length);
+int on_body_cb(http_parser *p, const char *at, size_t length);
+
+#define SIMPLE_HTTP_RESPONSE \
+    "HTTP/1.0 201 OK\r\n" \
+    "Content-type: text/html\r\n" \
+    "\r\n"
+
+#define DEFAULT_ERROR_PAGE_STR \
+    "<html>" \
+    "<head>" \
+    "<title>Action Not Allowed</title>" \
+    "</head>" \
+    "<body>" \
+    "<h1>Action Not Allowed</h1>" \
+    "This request has been blocked by the firewall shim. " \
+    "Please contact your network administrator for more details." \
+    "</body>" \
+    "</html>"
 
 #endif

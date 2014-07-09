@@ -6,7 +6,9 @@
 
 #define TAB_SIZE 4
 
-#define print_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro))
+#define print_str_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro))
+#define print_int_macro(macro) printf("%s = \"%d\"\n", (#macro), (macro))
+#define print_bool_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro) ? "true" : "false")
 
 #define print_str_arr(var) { printf("%s = {\n", #var); \
     int i; \
@@ -60,9 +62,7 @@ void print_page_conf(struct page_conf *p, int depth) {
 
     print_str_field(whitelist);
     print_int_field(max_param_len);
-    print_int_field(max_header_field_len);
-    print_int_field(max_header_len);
-    print_int_field(max_post_payload_len);
+    print_int_field(max_request_payload_len);
     print_bool_field(params_allowed);
     print_http_req_field(request_types);
     print_int_field(requires_login);
@@ -81,15 +81,25 @@ int main(int argc, char **argv) {
     int i, j;
     init_config_vars();
 
-    printf("Config:\n");
-    print_macro(HTTPS_PRIVATE_KEY);
-    print_macro(HTTPS_CERTIFICATE);
+    printf("** Global Config **\n");
+    print_str_macro(HTTPS_PRIVATE_KEY);
+    print_str_macro(HTTPS_CERTIFICATE);
+    print_int_macro(MAX_HEADER_FIELD_LEN);
     print_str_arr(successful_login_pages);
+    print_int_macro(MAX_HEADER_VALUE_LEN);
+
+    printf("\n** Global Page Defaults **\n");
+    print_int_macro(MAX_REQUEST_PAYLOAD_LEN);
+    print_str_macro(WHITELIST);
+    print_bool_macro(PARAMS_ALLOWED);
+    print_bool_macro(REQUIRES_LOGIN);
+    print_int_macro(MAX_PARAM_LEN);
+
     puts("");
 
-    printf("pages_conf = {\n");
+    printf("** Page-specific Config**\n");
     for (i = 0; i < sizeof(pages_conf) / sizeof(*pages_conf); i++) {
-        print_page_conf(&pages_conf[i], 1);
+        print_page_conf(&pages_conf[i], 0);
     }
     printf("}\n");
 

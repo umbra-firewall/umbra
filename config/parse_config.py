@@ -267,11 +267,11 @@ class CodeHeader:
 
 class Option:
     """Represents simple configuration option"""
-    def __init__(self, name, defaultValue=None, isToplevel=False):
+    def __init__(self, name, defaultValue=None, isTopLevel=False):
         self.name = name
         self.value = defaultValue
         self.valueHasBeenSet = False
-        self.isToplevel = isToplevel
+        self.isTopLevel = isTopLevel
 
     @staticmethod
     def expand_elements(elements):
@@ -332,7 +332,7 @@ class BoolOption(Option):
     def addConfig(self, info):
         if not self.valueHasBeenSet:
             return
-        if self.isToplevel:
+        if self.isTopLevel:
             info.add_macro_def(self.name.upper(), self.getCValue())
 
     def getCValue(self):
@@ -353,7 +353,7 @@ class PosIntOption(Option):
         self.assrt(self.value > 0, 'Must be greater than 0')
 
     def addConfig(self, info):
-        if self.isToplevel:
+        if self.isTopLevel:
             info.add_macro_def(self.name.upper(), self.getCValue())
 
     def getCValue(self):
@@ -371,7 +371,7 @@ class StringOption(Option):
                    repr(self.value))
 
     def addConfig(self, info):
-        if self.isToplevel:
+        if self.isTopLevel:
             info.add_macro_def(self.name.upper(), self.getCValue())
 
     def getCType(self):
@@ -385,12 +385,12 @@ class StringArrOption(Option):
     """Represents array of strings config option"""
 
     def __init__(self, name, default=[], minLen=0, allowedVals=None,
-                 isElementValid=None, isToplevel=False):
+                 isElementValid=None, isTopLevel=False):
         Option.__init__(self, name, default)
         self.allowedVals = allowedVals
         self.minLen = minLen
         self.isElementValid = isElementValid
-        self.isToplevel = isToplevel
+        self.isTopLevel = isTopLevel
 
     def validate(self):
         self.assrt(is_list_of(self.value, is_string, self.minLen),
@@ -405,7 +405,7 @@ class StringArrOption(Option):
                            repr(x))
 
     def addConfig(self, info):
-        if self.isToplevel:
+        if self.isTopLevel:
             info.add_var_def(StringArrInst(self.name, self.value))
 
     def getCType(self):
@@ -428,7 +428,7 @@ class HTTPReqsOption(StringArrOption):
 class MultiOption(Option):
     """Represents option that contains child options"""
 
-    def __init__(self, name, requiredConf, optionalConf, isToplevel=False):
+    def __init__(self, name, requiredConf, optionalConf, isTopLevel=False):
         self.name = name
         self.value = None
         self.jsonInput = None
@@ -440,7 +440,7 @@ class MultiOption(Option):
         for x in self.requiredConf.union(self.optionalConf):
             self.assrt(isinstance(x, Option), "Must take Options")
         self._instance_name = None
-        self.isToplevel = isToplevel
+        self.isTopLevel = isTopLevel
 
     def validate(self):
         for x in self.requiredConf:
@@ -497,11 +497,11 @@ class NamedOptionSet(MultiOption):
     name that maps to the set of child options.
     """
 
-    def __init__(self, name, requiredConf, optionalConf, isToplevel=False):
+    def __init__(self, name, requiredConf, optionalConf, isTopLevel=False):
         MultiOption.__init__(self, name, requiredConf, optionalConf)
         self.suboptions = {}
         self.orig_form = copy.deepcopy(self)
-        self.isToplevel = isToplevel
+        self.isTopLevel = isTopLevel
 
     def setValue(self, value):
         self.value = value
@@ -611,9 +611,7 @@ param_conf_optional = {
 
 page_conf_required = set()
 page_conf_optional = {
-        PosIntOption('max_header_field_len', 120),
-        PosIntOption('max_header_len', 120),
-        PosIntOption('max_post_payload_len', 120),
+        PosIntOption('max_request_payload_len', 120),
         ParamsOption('params', param_conf_required, param_conf_optional),
         BoolOption('params_allowed', False),
         HTTPReqsOption('request_types', ['HEAD', 'GET'], 0,
@@ -621,11 +619,22 @@ page_conf_optional = {
         BoolOption('requires_login', True)
         }.union(copy.deepcopy(param_conf_optional))
 
+page_conf_globals = copy.deepcopy(page_conf_optional)
+page_conf_globals = {x for x in page_conf_globals if x.name not in ['params']}
+for x in page_conf_globals:
+    x.isTopLevel = True
+
+enable_options = {
+        BoolOption('enable_header_field_check', isTopLevel=True),
+        BoolOption('enable_header_value_check', isTopLevel=True)
+}
 global_conf_required = {
-        StringOption('https_certificate', isToplevel=True),
-        StringOption('https_private_key', isToplevel=True),
-        StringArrOption('successful_login_pages', minLen=1, isToplevel=True)
-        }
+        StringOption('https_certificate', isTopLevel=True),
+        StringOption('https_private_key', isTopLevel=True),
+        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True),
+        PosIntOption('max_header_field_len', 120, isTopLevel=True),
+        PosIntOption('max_header_value_len', 120, isTopLevel=True)
+        }.union(page_conf_globals).union(enable_options)
 global_conf_optional = set()
 
 toplevel_conf = MultiOption('toplevel', {

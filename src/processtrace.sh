@@ -1,4 +1,7 @@
 #!/bin/sh
+#
+# Usage:  ./shim-trace 8080 80 | ./processtrace.sh ./shim-trace
+
 if test ! -f "$1"
 then
  echo "Error: executable $1 does not exist."

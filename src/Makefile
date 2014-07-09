@@ -1,7 +1,9 @@
 BIN_NORMAL = shim shim-dbg
 BIN = $(BIN_NORMAL) shim-trace config_printer
-SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c
-SHIM_SRC = shim.c shim.h config_header.h
+SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c \
+    http_parser.c http_parser.h
+SHIM_SRC = shim.c shim.h config_header.h http_parser.c http_parser.h
+SHIM_OBJ = shim.o http_parser.o bytearray.o
 
 # Set CROSS_COMPILE variable if needed when running make
 # Example: make CROSS_COMPILE=arm-linux-
@@ -28,11 +30,16 @@ shim: CFLAGS := $(CFLAGS_RELEASE)
 trace: shim-trace
 shim-trace: $(SHIM_SRC) trace.c
 	$(CC) $(CFLAGS_TRACE) -c shim.c
+	$(CC) $(CFLAGS_TRACE) -c http_parser.c
 	$(CC) -c trace.c
-	$(CC) shim.o trace.o -o shim-trace
+	$(CC) shim.o http_parser.o trace.o -o shim-trace
 
-$(BIN_NORMAL): $(SHIM_SRC)
-	$(CC) $(CFLAGS) $< -o $@
+$(BIN_NORMAL): $(SHIM_OBJ)
+	$(CC) $(CFLAGS) $^ -o $@
+
+shim.o: shim.c shim.h config_header.h
+bytearray.o: bytearray.c bytearray.h
+http_parser.o: http_parser.c http_parser.h
 
 config_printer: config_printer.c config_header.h
 
