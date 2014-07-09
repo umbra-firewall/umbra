@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
     puts("");
 
     printf("** Page-specific Config**\n");
-    for (i = 0; i < sizeof(pages_conf) / sizeof(*pages_conf); i++) {
+    for (i = 0; i < PAGES_CONF_LEN; i++) {
         print_page_conf(&pages_conf[i], 0);
     }
     printf("}\n");

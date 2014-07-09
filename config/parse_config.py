@@ -235,7 +235,10 @@ class CodeHeader:
                 f.write(s + '\n')
         f.write('}\n')
 
+        f.write('\n#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))\n')
+
         f.write('\n')
+
 
     def add_macro_def(self, name, value):
         self.macro_defs.append(MacroDef(name, value))

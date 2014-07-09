@@ -80,7 +80,9 @@ void handle_event(int efd, struct epoll_event *ev, int sfd);
 int handle_client_event(struct epoll_event *ev);
 int handle_server_event(struct epoll_event *ev);
 void handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+void init_error_page(char *error_page_file);
 void init_structures(char *error_page_file);
+void init_page_conf();
 struct connection_info *init_conn_info(int infd, int outfd);
 
 /* HTTP parser callbacks */

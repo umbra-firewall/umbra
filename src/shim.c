@@ -34,13 +34,13 @@ http_parser_settings parser_settings = {
     .on_message_complete = on_message_complete_cb
 };
 
-/* Callbacks for HTTP requests and responses */
-
+/* Set connection to cancelled state */
 void cancel_connection(http_parser *p) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->is_cancelled = true;
 }
 
+/* Returns whether connection is cancelled */
 bool is_conn_cancelled(struct event_data *ev_data) {
     if (ev_data->is_cancelled) {
         return true;
@@ -102,6 +102,7 @@ int on_body_cb(http_parser* p, const char* at, size_t length) {
     return 0;
 }
 
+/* Sets socket as non blocking */
 int make_socket_non_blocking(int sfd) {
     int flags, s;
 
@@ -121,6 +122,7 @@ int make_socket_non_blocking(int sfd) {
     return 0;
 }
 
+/* Create listening socket and bind to port */
 int create_and_bind(char *port) {
     struct addrinfo hints;
     struct addrinfo *result, *rp;
@@ -169,6 +171,7 @@ int create_and_bind(char *port) {
     return sfd;
 }
 
+/* Create listening socket */
 int create_and_connect(char *port) {
     int sockfd, rv;
     struct addrinfo hints, *servinfo, *p;
@@ -209,6 +212,7 @@ int create_and_connect(char *port) {
     return sockfd;
 }
 
+/* Free memory and close sockets associated with connection structure */
 void free_connection_info(struct connection_info *ci) {
     log_dbg("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
     if (ci != NULL) {
@@ -232,6 +236,7 @@ void free_connection_info(struct connection_info *ci) {
     }
 }
 
+/* Send entire buffer over socket, using multiple sends if necessary */
 int sendall(int sockfd, const void *buf, size_t len) {
     int sent_bytes;
     while (len > 0) {
@@ -249,6 +254,7 @@ int sendall(int sockfd, const void *buf, size_t len) {
     return 0;
 }
 
+/* Initialize event data structure */
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         enum http_parser_type parser_type, struct connection_info *conn_info) {
 
@@ -269,8 +275,7 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     return ev_data;
 }
 
-
-
+/* Initialize connection_info structure */
 struct connection_info *init_conn_info(int infd, int outfd) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
@@ -305,6 +310,7 @@ fail:
     return NULL;
 }
 
+/* Handle a new incoming connection */
 void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     int s;
     struct epoll_event client_event, server_event;
@@ -385,6 +391,7 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     }
 }
 
+/* Send a error page back on a socket */
 int send_error_page(int sock) {
     if (sendall(sock, SIMPLE_HTTP_RESPONSE, sizeof(SIMPLE_HTTP_RESPONSE)) < 0) {
         return -1;
@@ -465,6 +472,7 @@ int handle_client_event(struct epoll_event *ev) {
     return done;
 }
 
+/* Handle a server response event */
 int handle_server_event(struct epoll_event *ev) {
     int s;
     int done = 0;
@@ -509,6 +517,7 @@ int handle_server_event(struct epoll_event *ev) {
     return done;
 }
 
+/* Handle epoll event */
 void handle_event(int efd, struct epoll_event *ev, int sfd) {
     int done;
 
@@ -550,12 +559,13 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
 
 }
 
+/* Handler for SIGINT */
 void sigint_handler(int dummy) {
     sigint_received = true;
 }
 
-void init_structures(char *error_page_file) {
-    /* Initialize error page foramt */
+/* Initialize error page */
+void init_error_page(char *error_page_file) {
     if (error_page_file == NULL) {
         error_page_len = sizeof(DEFAULT_ERROR_PAGE_STR);
         error_page_buf = malloc(error_page_len);
@@ -567,7 +577,8 @@ void init_structures(char *error_page_file) {
     } else {
         FILE *f = fopen(error_page_file, "r");
         if (f == NULL) {
-            log_error("Failed to open error page file \"%s\"\n", error_page_file);
+            log_error("Failed to open error page file \"%s\"\n",
+                    error_page_file);
             perror("fopen");
             exit(EXIT_FAILURE);
         }
@@ -598,8 +609,18 @@ void init_structures(char *error_page_file) {
             exit(EXIT_FAILURE);
         }
     }
+}
 
+/* Initialize structures for walking pages */
+void init_page_conf() {
+    // @Todo(Travis) Create trie to index pages
+}
+
+/* Do main initialization */
+void init_structures(char *error_page_file) {
+    init_error_page(error_page_file);
     init_config_vars();
+    init_page_conf();
 }
 
 int main(int argc, char *argv[]) {
