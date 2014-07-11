@@ -2,7 +2,8 @@ BIN_NORMAL = shim shim-dbg
 BIN = $(BIN_NORMAL) shim-trace config_printer
 SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c \
     http_parser.c http_parser.h
-SHIM_SRC = shim.c shim.h config_header.h http_parser.c http_parser.h
+SHIM_SRC = shim.c shim.h config_header.h http_parser.c http_parser.h \
+    bytearray.c bytearray.h
 SHIM_OBJ = shim.o http_parser.o bytearray.o
 
 # Set CROSS_COMPILE variable if needed when running make

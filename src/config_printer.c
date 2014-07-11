@@ -43,10 +43,14 @@ void print_http_req_field(int r) {
 
 #define printf_indent(depth, args...) print_indent(depth); printf(args)
 
-#define print_str_field(item) printf_indent(depth + 1, "." #item " = \"%s\"\n", p->item)
-#define print_int_field(item) printf_indent(depth + 1, "." #item " = %d\n", p->item)
-#define print_http_req_field(item) printf_indent(depth + 1, "." #item " = "); print_http_req_field(p->item); printf("\n")
-#define print_bool_field(item) printf_indent(depth + 1, "." #item " = %s\n", p->item ? "TRUE" : "FALSE")
+#define print_str_field(item) printf_indent(depth + 1, "." #item " = \"%s\"\n", \
+        p->item)
+#define print_int_field(item) printf_indent(depth + 1, "." #item " = %d\n", \
+        p->item)
+#define print_http_req_field(item) printf_indent(depth + 1, "." #item " = "); \
+        print_http_req_field(p->item); printf("\n")
+#define print_bool_field(item) printf_indent(depth + 1, "." #item " = %s\n", \
+        p->item ? "TRUE" : "FALSE")
 
 void print_params(struct params *p, int depth) {
     printf_indent(depth, "\"%s\" {\n", p->name);
@@ -65,7 +69,7 @@ void print_page_conf(struct page_conf *p, int depth) {
     print_int_field(max_request_payload_len);
     print_bool_field(params_allowed);
     print_http_req_field(request_types);
-    print_int_field(requires_login);
+    print_bool_field(requires_login);
     print_int_field(params_len);
 
     printf_indent(depth + 1, ".params = {\n");
@@ -89,11 +93,7 @@ int main(int argc, char **argv) {
     print_int_macro(MAX_HEADER_VALUE_LEN);
 
     printf("\n** Global Page Defaults **\n");
-    print_int_macro(MAX_REQUEST_PAYLOAD_LEN);
-    print_str_macro(WHITELIST);
-    print_bool_macro(PARAMS_ALLOWED);
-    print_bool_macro(REQUIRES_LOGIN);
-    print_int_macro(MAX_PARAM_LEN);
+    print_page_conf(&default_page_conf, 0);
 
     puts("");
 

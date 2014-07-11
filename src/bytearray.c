@@ -29,7 +29,7 @@ void bytearray_free(bytearray_t *ba) {
     free(ba);
 }
 
-int bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
+int bytearray_append(bytearray_t *ba, const uint8_t *data, size_t len) {
     uint8_t *new_data;
 
     if (ba == NULL) {
@@ -48,8 +48,9 @@ int bytearray_append(bytearray_t *ba, uint8_t *data, size_t len) {
         }
         ba->data = new_data;
     }
-
     memcpy(ba->data + ba->len, data, len);
+    ba->len = new_len;
+
     return 0;
 }
 

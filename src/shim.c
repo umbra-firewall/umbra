@@ -49,55 +49,80 @@ bool is_conn_cancelled(struct event_data *ev_data) {
     }
 }
 
-int on_message_begin_cb(http_parser* p) {
+int on_message_begin_cb(http_parser *p) {
     log_trace("***MESSAGE BEGIN***\n");
     return 0;
 }
 
-int on_headers_complete_cb(http_parser* p) {
+struct page_conf *find_matching_page(char *url, size_t len) {
+    // @Todo(Travis) Implement trie search
+    int i;
+    for (i = 0; i < PAGES_CONF_LEN; i++) {
+        if (len == strlen(pages_conf[i].name)
+                && memcmp(url, pages_conf[i].name, len) == 0) {
+            return &pages_conf[i];
+        }
+    }
+    return NULL;
+}
+
+int on_headers_complete_cb(http_parser *p) {
     log_trace("***HEADERS COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = WAITING_FOR_BODY;
+    ev_data->state = HEADER_COMPLETE;
+
+    ev_data->page_match = find_matching_page((char *) ev_data->url->data,
+            ev_data->url->len);
+
     return 0;
 }
 
-int on_message_complete_cb(http_parser* p) {
+int on_message_complete_cb(http_parser *p) {
     log_trace("***MESSAGE COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->state = MESSAGE_COMPLETE;
     return 0;
 }
 
-int on_url_cb(http_parser* p, const char* at, size_t length) {
-    log_trace("Url: %.*s\n", (int)length, at);
+int on_url_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = WAITING_FOR_HEADER;
+    ev_data->state = URL_COMPLETE;
+
+    if (bytearray_append(ev_data->url, (const uint8_t *) at, length) < 0) {
+        cancel_connection(p);
+        log_warn("Cancelling request because out of memory\n");
+        return -1;
+    }
+    log_trace("Url: \"%.*s\"\n", (int) ev_data->url->len, ev_data->url->data);
+
     return 0;
 }
 
-int on_header_field_cb(http_parser* p, const char* at, size_t length) {
+int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header field: %.*s\n", (int)length, at);
     if (length > MAX_HEADER_FIELD_LEN) {
         log_info("Blocked request because header field length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_FIELD_LEN);
         cancel_connection(p);
+        return -1;
     }
     return 0;
 }
 
-int on_header_value_cb(http_parser* p, const char* at, size_t length) {
+int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header value: %.*s\n", (int)length, at);
     if (length > MAX_HEADER_VALUE_LEN) {
         log_info("Blocked request because header value length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_VALUE_LEN);
         cancel_connection(p);
+        return -1;
     }
     return 0;
 }
 
-int on_body_cb(http_parser* p, const char* at, size_t length) {
+int on_body_cb(http_parser *p, const char *at, size_t length) {
     log_trace("Body: %.*s\n", (int)length, at);
     return 0;
 }
@@ -212,9 +237,18 @@ int create_and_connect(char *port) {
     return sockfd;
 }
 
+/* Free memory associated with event data */
+void free_event_data(struct event_data *ev) {
+    //log_trace("Freeing event data %p\n", ev);
+    if (ev != NULL) {
+        bytearray_free(ev->url);
+        free(ev);
+    }
+}
+
 /* Free memory and close sockets associated with connection structure */
 void free_connection_info(struct connection_info *ci) {
-    log_dbg("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
+    log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
     if (ci != NULL) {
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
@@ -226,11 +260,9 @@ void free_connection_info(struct connection_info *ci) {
             if (send_fd && close(send_fd)) {
                 perror("close");
             }
-            free(ci->client_ev_data);
+            free_event_data(ci->client_ev_data);
         }
-        if (ci->server_ev_data) {
-            free(ci->server_ev_data);
-        }
+        free_event_data(ci->server_ev_data);
 
         free(ci);
     }
@@ -264,9 +296,16 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->type = type;
         ev_data->listen_fd = listen_fd;
         ev_data->send_fd = send_fd;
-        ev_data->state = WAITING_FOR_HEADER;
+        ev_data->state = URL_COMPLETE;
         ev_data->is_cancelled = false;
         ev_data->conn_info = conn_info;
+        ev_data->page_match = NULL;
+        ev_data->have_done_after_header_checks = false;
+
+        if ((ev_data->url = new_bytearray()) == NULL) {
+            free(ev_data);
+            return NULL;
+        }
 
         http_parser_init(&ev_data->parser, parser_type);
         ev_data->parser.data = ev_data;
@@ -402,6 +441,11 @@ int send_error_page(int sock) {
     return 0;
 }
 
+/* Do checks that are possible after the header is received */
+void do_after_header_checks(struct event_data *ev_data) {
+    ;
+}
+
 /* Handles incoming client requests.
  * Returns boolean indicated if connection is done */
 int handle_client_event(struct epoll_event *ev) {
@@ -439,7 +483,8 @@ int handle_client_event(struct epoll_event *ev) {
         }
 #endif
 
-        nparsed = http_parser_execute(&ev_data->parser, &parser_settings, buf, count);
+        nparsed = http_parser_execute(&ev_data->parser, &parser_settings, buf,
+                count);
 
         log_dbg("Parsed %ld / %ld bytes\n", nparsed, count);
 
@@ -448,7 +493,15 @@ int handle_client_event(struct epoll_event *ev) {
             log_warn("HTTP upgrade not supported");
             done = 1;
             break;
-        } else if (is_conn_cancelled(ev_data)) {
+        }
+
+        if (!ev_data->have_done_after_header_checks
+                        && ev_data->state >= HEADER_COMPLETE) {
+            do_after_header_checks(ev_data);
+            ev_data->have_done_after_header_checks = true;
+        }
+
+        if (is_conn_cancelled(ev_data)) {
             if (send_error_page(ev_data->listen_fd)) {
                 log_info("Failed to send error page.\n");
             }
@@ -456,7 +509,7 @@ int handle_client_event(struct epoll_event *ev) {
             close(ev_data->send_fd);
             ev_data->listen_fd = 0;
             ev_data->send_fd = 0;
-            log_info("Closed_connection");
+            log_info("Closed_connection\n");
             done = 1;
             break;
         }

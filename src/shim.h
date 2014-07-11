@@ -42,7 +42,7 @@ typedef enum {
 } event_t;
 
 typedef enum {
-    WAITING_FOR_URL, WAITING_FOR_HEADER, WAITING_FOR_BODY, MESSAGE_COMPLETE
+    WAITING_FOR_URL, URL_COMPLETE, HEADER_COMPLETE, MESSAGE_COMPLETE
 } conn_state_t;
 
 #define HTTP_REQ_HEAD (1 << 0)
@@ -54,15 +54,20 @@ typedef enum {
 #define HTTP_REQ_CONNECT (1 << 6)
 
 struct connection_info;
+struct page_conf;
+struct params;
 
 struct event_data {
     int listen_fd;
     int send_fd;
     http_parser parser;
     struct connection_info *conn_info;
+    bytearray_t *url;
+    struct page_conf *page_match;
     event_t type : 8;
     conn_state_t state : 8;
     bool is_cancelled : 1;
+    bool have_done_after_header_checks : 1;
 };
 
 struct connection_info {
@@ -73,6 +78,7 @@ struct connection_info {
 int make_socket_non_blocking(int sfd);
 int create_and_bind(char *port);
 int create_and_connect(char *port);
+void free_event_data(struct event_data *ev);
 void free_connection_info(struct connection_info *ci);
 int sendall(int sockfd, const void *buf, size_t len);
 
@@ -84,6 +90,7 @@ void init_error_page(char *error_page_file);
 void init_structures(char *error_page_file);
 void init_page_conf();
 struct connection_info *init_conn_info(int infd, int outfd);
+void do_after_header_checks(struct event_data *ev_data);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

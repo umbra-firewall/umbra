@@ -10,6 +10,9 @@ import os
 import sys
 
 
+default_page_conf = None
+
+
 class ConfigValidationException(Exception):
     pass
 
@@ -141,8 +144,10 @@ class StructInst(VarInst):
     """Represents instance of a C struct"""
 
 
-    def __init__(self, structDef, struct_name):
-        VarInst.__init__(self, '', VarInst.get_next_inst_name(), None)
+    def __init__(self, structDef, struct_name, inst_name=None):
+        if inst_name == None:
+            inst_name = VarInst.get_next_inst_name()
+        VarInst.__init__(self, '', inst_name, None)
         structDef.set_instance_name(self.name)
         self.option = structDef
         self.struct_name = struct_name
@@ -339,7 +344,7 @@ class BoolOption(Option):
             info.add_macro_def(self.name.upper(), self.getCValue())
 
     def getCValue(self):
-        return 'true' if self.value else 'true'
+        return 'true' if self.value else 'false'
 
     def getCType(self):
         return 'int'
@@ -417,9 +422,6 @@ class StringArrOption(Option):
     def getCValue(self):
         return '{%s}' % ', '.join([c_str_repr(x) for x in self.value])
 
-    def setValue(self, value):
-        Option.setValue(self, value)
-
 
 class HTTPReqsOption(StringArrOption):
     def getStructMemberValue(self):
@@ -427,6 +429,7 @@ class HTTPReqsOption(StringArrOption):
 
     def getCType(self):
         return 'int'
+
 
 class MultiOption(Option):
     """Represents option that contains child options"""
@@ -462,7 +465,7 @@ class MultiOption(Option):
         name2conf = self._getName2Conf()
 
         # Set option values
-        for optname, optval in value.items():
+        for optname, optval in sorted(value.items(), key=lambda x: x[0]):
             self.assrt(optname in name2conf, 'Unknown option "%s"' % optname)
             name2conf[optname].setValue(optval)
 
@@ -483,8 +486,7 @@ class MultiOption(Option):
 
     def get_instance_name(self):
         if self._instance_name == None:
-            #raise Exception('Instance name has not been set')
-            pass
+            raise Exception('Instance name has not been set')
         return self._instance_name
 
     def set_instance_name(self, name):
@@ -494,17 +496,56 @@ class MultiOption(Option):
         return self.get_instance_name()
 
 
+class DefaultPageConfOption(MultiOption):
+    def __init__(self, name, requiredConf, optionalConf, param_option, isTopLevel=False):
+        MultiOption.__init__(self, name, requiredConf, optionalConf, isTopLevel)
+        self.param_option = param_option
+
+    def addConfig(self, info):
+        # Add structure definition
+
+        default_page_conf_name = 'default_page_conf'
+        # Add name
+        nameOpt = StringOption('name')
+        nameOpt.setValue(default_page_conf_name)
+        self.requiredConf.add(nameOpt)
+
+        # Set params
+        self.param_option.set_instance_name('NULL')
+        self.requiredConf.add(self.param_option)
+
+        opts = list(self.getAllOptions())
+        Option.sort_struct_element_list(opts)
+        page_conf_struct = StructDef('page_conf', opts)
+        info.add_struct_def(page_conf_struct)
+
+        # Call children
+        for option in self.getAllOptions():
+            option.addConfig(info)
+
+        # Add default structure instance
+        inst = StructInst(self, 'page_conf', inst_name=default_page_conf_name)
+        info.add_page_conf_struct(inst)
+
+
 class NamedOptionSet(MultiOption):
     """
     Represents option that has child options such that each child has a unique
     name that maps to the set of child options.
     """
 
-    def __init__(self, name, requiredConf, optionalConf, isTopLevel=False):
+    def __init__(self, name, requiredConf, optionalConf, defaultConf=None, isTopLevel=False):
         MultiOption.__init__(self, name, requiredConf, optionalConf)
         self.suboptions = {}
         self.orig_form = copy.deepcopy(self)
         self.isTopLevel = isTopLevel
+        self.defaultConf = defaultConf
+
+    def _updateWithDefaults(self, page_conf):
+        default_opt_name2val = self.defaultConf._getName2Conf()
+        for opt in page_conf.getAllOptions():
+            if opt.name != 'params':
+                opt.setValue(default_opt_name2val[opt.name].value)
 
     def setValue(self, value):
         self.value = value
@@ -512,6 +553,8 @@ class NamedOptionSet(MultiOption):
         for path, conf in value.items():
             page_conf = MultiOption(self.name + '$' + path, self.requiredConf,
                                      self.optionalConf)
+            if self.defaultConf != None:
+                self._updateWithDefaults(page_conf)
             page_conf.setValue(conf.copy())
             self.suboptions[path] = page_conf
 
@@ -612,20 +655,20 @@ param_conf_optional = {
         StringOption('whitelist', '')
         }
 
+params_option = ParamsOption('params', param_conf_required, param_conf_optional)
 page_conf_required = set()
 page_conf_optional = {
         PosIntOption('max_request_payload_len', 120),
-        ParamsOption('params', param_conf_required, param_conf_optional),
+        params_option,
         BoolOption('params_allowed', False),
         HTTPReqsOption('request_types', ['HEAD', 'GET'], 0,
                        ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'TRACE']),
         BoolOption('requires_login', True)
         }.union(copy.deepcopy(param_conf_optional))
 
-page_conf_globals = copy.deepcopy(page_conf_optional)
-page_conf_globals = {x for x in page_conf_globals if x.name not in ['params']}
-for x in page_conf_globals:
-    x.isTopLevel = True
+default_page_conf_required = {x for x in page_conf_required.union(page_conf_optional)
+                              if x.name not in ['params']}
+default_page_conf_optional = set()
 
 enable_options = {
         BoolOption('enable_header_field_check', isTopLevel=True),
@@ -637,13 +680,21 @@ global_conf_required = {
         StringArrOption('successful_login_pages', minLen=1, isTopLevel=True),
         PosIntOption('max_header_field_len', 120, isTopLevel=True),
         PosIntOption('max_header_value_len', 120, isTopLevel=True)
-        }.union(page_conf_globals).union(enable_options)
+        }.union(enable_options)
 global_conf_optional = set()
+
+default_page_conf = DefaultPageConfOption(
+    'default_page_config',
+    default_page_conf_required,
+    default_page_conf_optional,
+    params_option)
+params_option.defaultConf = default_page_conf
 
 toplevel_conf = MultiOption('toplevel', {
         MultiOption('global_config', global_conf_required,
                     global_conf_optional),
-        PageConfOption('page_config', page_conf_required, page_conf_optional)
+        default_page_conf,
+        PageConfOption('page_config', page_conf_required, page_conf_optional, default_page_conf)
         }, set())
 
 
