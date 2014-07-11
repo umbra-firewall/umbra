@@ -1,7 +1,12 @@
 Umbra
 =====
 
-Acts as a shim between a webserver and the outside world. 
+Acts as a security shim between a webserver and the outside world.
+
+## Configuration
+
+Set up JSON configuration file at `config/config.json`. You may want to use
+`config/sample_config.json` as a template.
 
 ## Building
 
@@ -10,8 +15,14 @@ Acts as a shim between a webserver and the outside world.
 
 ## Usage
 
-./shim SHIM-PORT SERVER-PORT
+`./shim SHIM_PORT SERVER_PORT [ERROR_PAGE]`
+
+SHIM_PORT is the port that the shim listens on externally.
+
+SERVER_PORT is the port that the shim expects the HTTP server to be listening on.
+
+ERROR_PAGE is an optional argument which may serve as the error page. If not provided, a default one will be used.
 
 ## Example Usage
 
-    ./shim-trace 8080 8000
+    ./shim 8080 8000
