@@ -54,6 +54,10 @@ int on_message_begin_cb(http_parser *p) {
     return 0;
 }
 
+/*
+ * Attempts to find matching page conf. If it cannot find one, it returns a
+ * pointer to the default page conf structure.
+ */
 struct page_conf *find_matching_page(char *url, size_t len) {
     // @Todo(Travis) Implement trie search
     int i;
@@ -63,13 +67,13 @@ struct page_conf *find_matching_page(char *url, size_t len) {
             return &pages_conf[i];
         }
     }
-    return NULL;
+    return &default_page_conf;
 }
 
 int on_headers_complete_cb(http_parser *p) {
     log_trace("***HEADERS COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = HEADER_COMPLETE;
+    ev_data->state = HEADERS_COMPLETE;
 
     ev_data->page_match = find_matching_page((char *) ev_data->url->data,
             ev_data->url->len);
@@ -441,9 +445,33 @@ int send_error_page(int sock) {
     return 0;
 }
 
+/* Converts http_parser method to shim method. Returns 0 if not valid. */
+int http_parser_method_to_shim(enum http_method method) {
+    if (0 <= method && method < NUM_HTTP_REQ_TYPES) {
+        return 1 << method;
+    } else {
+        log_warn("Invalid http_parser method %d\n", method);
+        return 0;
+    }
+}
+
+/* Check HTTP request types */
+void check_request_type(struct event_data *ev_data) {
+    enum http_method method = ev_data->parser.method;
+    log_trace("Checking request type %s\n", http_method_str(method));
+
+    int http_method = http_parser_method_to_shim(method);
+    if (!(ev_data->page_match->request_types & http_method)) {
+        log_error("Request type %s not allowed\n", http_method_str(method));
+        cancel_connection(&ev_data->parser);
+    }
+}
+
 /* Do checks that are possible after the header is received */
 void do_after_header_checks(struct event_data *ev_data) {
-    ;
+#if ENABLE_REQUEST_TYPE_CHECK
+    check_request_type(ev_data);
+#endif
 }
 
 /* Handles incoming client requests.
@@ -496,7 +524,7 @@ int handle_client_event(struct epoll_event *ev) {
         }
 
         if (!ev_data->have_done_after_header_checks
-                        && ev_data->state >= HEADER_COMPLETE) {
+                        && ev_data->state >= HEADERS_COMPLETE) {
             do_after_header_checks(ev_data);
             ev_data->have_done_after_header_checks = true;
         }

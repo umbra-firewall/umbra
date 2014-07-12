@@ -42,16 +42,21 @@ typedef enum {
 } event_t;
 
 typedef enum {
-    WAITING_FOR_URL, URL_COMPLETE, HEADER_COMPLETE, MESSAGE_COMPLETE
+    WAITING_FOR_URL, URL_COMPLETE, HEADERS_COMPLETE, MESSAGE_COMPLETE
 } conn_state_t;
 
-#define HTTP_REQ_HEAD (1 << 0)
+
+/* HTTP_REQ definitions must be defined in same order as http_parser */
+#define HTTP_REQ_DELETE (1 << 0)
 #define HTTP_REQ_GET (1 << 1)
-#define HTTP_REQ_POST (1 << 2)
-#define HTTP_REQ_PUT (1 << 3)
-#define HTTP_REQ_DELETE (1 << 4)
-#define HTTP_REQ_TRACE (1 << 5)
-#define HTTP_REQ_CONNECT (1 << 6)
+#define HTTP_REQ_HEAD (1 << 2)
+#define HTTP_REQ_POST (1 << 3)
+#define HTTP_REQ_PUT (1 << 4)
+#define HTTP_REQ_CONNECT (1 << 5)
+#define HTTP_REQ_OPTIONS (1 << 6)
+#define HTTP_REQ_TRACE (1 << 7)
+#define NUM_HTTP_REQ_TYPES 8
+
 
 struct connection_info;
 struct page_conf;
@@ -91,6 +96,8 @@ void init_structures(char *error_page_file);
 void init_page_conf();
 struct connection_info *init_conn_info(int infd, int outfd);
 void do_after_header_checks(struct event_data *ev_data);
+void check_request_type(struct event_data *ev_data);
+int http_parser_method_to_shim(enum http_method method);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

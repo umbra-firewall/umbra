@@ -662,7 +662,7 @@ page_conf_optional = {
         params_option,
         BoolOption('params_allowed', False),
         HTTPReqsOption('request_types', ['HEAD', 'GET'], 0,
-                       ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'TRACE']),
+                       ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
         BoolOption('requires_login', True)
         }.union(copy.deepcopy(param_conf_optional))
 
@@ -672,7 +672,8 @@ default_page_conf_optional = set()
 
 enable_options = {
         BoolOption('enable_header_field_check', isTopLevel=True),
-        BoolOption('enable_header_value_check', isTopLevel=True)
+        BoolOption('enable_header_value_check', isTopLevel=True),
+        BoolOption('enable_request_type_check', isTopLevel=True)
 }
 global_conf_required = {
         StringOption('https_certificate', isTopLevel=True),
