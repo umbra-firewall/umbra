@@ -98,6 +98,8 @@ struct connection_info *init_conn_info(int infd, int outfd);
 void do_after_header_checks(struct event_data *ev_data);
 void check_request_type(struct event_data *ev_data);
 int http_parser_method_to_shim(enum http_method method);
+void check_url_params(struct event_data *ev_data);
+void check_arg(struct event_data *ev_data, char *arg, size_t len);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

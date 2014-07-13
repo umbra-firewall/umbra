@@ -92,7 +92,7 @@ int on_url_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->state = URL_COMPLETE;
 
-    if (bytearray_append(ev_data->url, (const uint8_t *) at, length) < 0) {
+    if (bytearray_append(ev_data->url, at, length) < 0) {
         cancel_connection(p);
         log_warn("Cancelling request because out of memory\n");
         return -1;
@@ -467,10 +467,61 @@ void check_request_type(struct event_data *ev_data) {
     }
 }
 
+/* Perform argument specific checks */
+void check_arg(struct event_data *ev_data, char *arg, size_t len) {
+    log_dbg("arg=\"%.*s\", len=%ld\n", (int) len, arg, len);
+
+    if (len <= 0) {
+        log_warn("Malformed argument\n");
+        cancel_connection(&ev_data->parser);
+    }
+    // @Todo(Travis): do per parameter check
+    // @Todo(Travis): account for params_allowed
+}
+
+/* Check parameters passed in the URL */
+void check_url_params(struct event_data *ev_data) {
+    log_trace("Checking URL parameters\n");
+    bytearray_t *url = ev_data->url;
+    char *quest = memchr(url->data, '?', url->len);
+    if (quest == NULL) {
+        log_trace("URL has no parameters\n");
+        return;
+    }
+
+    char *query = quest + 1;
+    size_t query_len = url->len - (query - url->data);
+
+    if (query_len <= 0) {
+        log_trace("Empty query\n");
+    }
+
+    log_dbg("query: \"%.*s\", len=%ld\n", (int) query_len, query, query_len);
+    char *next = memchr(query, '&', query_len);
+    size_t arg_len;
+    while (query_len >= 0) {
+        arg_len = next ? (next - query) : query_len;
+
+        check_arg(ev_data, query, arg_len);
+
+        if (next == NULL) {
+            break;
+        }
+
+        query_len -= arg_len + 1;
+        query = next + 1;
+        next = memchr(query, '&', query_len);
+    }
+}
+
 /* Do checks that are possible after the header is received */
 void do_after_header_checks(struct event_data *ev_data) {
 #if ENABLE_REQUEST_TYPE_CHECK
     check_request_type(ev_data);
+#endif
+
+#if ENABLE_PARAM_CHECKS
+    check_url_params(ev_data);
 #endif
 }
 

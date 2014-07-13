@@ -29,8 +29,8 @@ void bytearray_free(bytearray_t *ba) {
     free(ba);
 }
 
-int bytearray_append(bytearray_t *ba, const uint8_t *data, size_t len) {
-    uint8_t *new_data;
+int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
+    char *new_data;
 
     if (ba == NULL) {
         fprintf(stderr, "Tried to append null bytearray\n");
