@@ -124,8 +124,6 @@ class StructArrInst(VarInst):
 
     def to_string(self):
         raise Exception('Call to_string_declaration() or to_string_initialize()')
-        #s = '{%s}' % ', '.join([x.name for x in self.value]) @todo(Travis) remove comment
-        #return 'struct %s %s[] = %s;\n' % (self.struct_name, self.name, s)
 
     def to_string_declaration(self):
         return 'struct %s %s[%d];\n' % (self.struct_name, self.name, len(self.value))
@@ -275,9 +273,9 @@ class CodeHeader:
 
 class Option:
     """Represents simple configuration option"""
-    def __init__(self, name, defaultValue=None, isTopLevel=False):
+    def __init__(self, name, isTopLevel=False):
         self.name = name
-        self.value = defaultValue
+        self.value = None
         self.valueHasBeenSet = False
         self.isTopLevel = isTopLevel
 
@@ -392,9 +390,10 @@ class StringOption(Option):
 class StringArrOption(Option):
     """Represents array of strings config option"""
 
-    def __init__(self, name, default=[], minLen=0, allowedVals=None,
+    def __init__(self, name, minLen=0, allowedVals=None,
                  isElementValid=None, isTopLevel=False):
-        Option.__init__(self, name, default)
+        Option.__init__(self, name)
+        self.value = []
         self.allowedVals = allowedVals
         self.minLen = minLen
         self.isElementValid = isElementValid
@@ -544,8 +543,14 @@ class NamedOptionSet(MultiOption):
     def _updateWithDefaults(self, page_conf):
         default_opt_name2val = self.defaultConf._getName2Conf()
         for opt in page_conf.getAllOptions():
-            if opt.name != 'params':
-                opt.setValue(default_opt_name2val[opt.name].value)
+            if isinstance(opt, NamedOptionSet):  # params
+                for p in opt.suboptions.values():
+                    self._updateWithDefaults(p)
+            else:
+                if opt.valueHasBeenSet:
+                    continue
+                else:
+                    opt.setValue(default_opt_name2val[opt.name].value)
 
     def setValue(self, value):
         self.value = value
@@ -553,10 +558,10 @@ class NamedOptionSet(MultiOption):
         for path, conf in value.items():
             page_conf = MultiOption(self.name + '$' + path, self.requiredConf,
                                      self.optionalConf)
-            if self.defaultConf != None:
-                self._updateWithDefaults(page_conf)
             page_conf.setValue(conf.copy())
             self.suboptions[path] = page_conf
+            if self.defaultConf != None:
+                self._updateWithDefaults(page_conf)
 
     def getOrigForm(self):
         return copy.deepcopy(self.orig_form)
@@ -651,19 +656,19 @@ class ParamsOption(NamedOptionSet):
 # Configuration specification
 param_conf_required = set()
 param_conf_optional = {
-        PosIntOption('max_param_len', 20),
+        PosIntOption('max_param_len'),
         StringOption('whitelist', '')
         }
 
 params_option = ParamsOption('params', param_conf_required, param_conf_optional)
 page_conf_required = set()
 page_conf_optional = {
-        PosIntOption('max_request_payload_len', 120),
+        PosIntOption('max_request_payload_len'),
         params_option,
-        BoolOption('params_allowed', False),
-        HTTPReqsOption('request_types', ['HEAD', 'GET'], 0,
-                       ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
-        BoolOption('requires_login', True)
+        BoolOption('params_allowed'),
+        HTTPReqsOption('request_types', minLen=1,
+                       allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
+        BoolOption('requires_login')
         }.union(copy.deepcopy(param_conf_optional))
 
 default_page_conf_required = {x for x in page_conf_required.union(page_conf_optional)
@@ -680,8 +685,8 @@ global_conf_required = {
         StringOption('https_certificate', isTopLevel=True),
         StringOption('https_private_key', isTopLevel=True),
         StringArrOption('successful_login_pages', minLen=1, isTopLevel=True),
-        PosIntOption('max_header_field_len', 120, isTopLevel=True),
-        PosIntOption('max_header_value_len', 120, isTopLevel=True)
+        PosIntOption('max_header_field_len', isTopLevel=True),
+        PosIntOption('max_header_value_len', isTopLevel=True)
         }.union(enable_options)
 global_conf_optional = set()
 
@@ -690,13 +695,13 @@ default_page_conf = DefaultPageConfOption(
     default_page_conf_required,
     default_page_conf_optional,
     params_option)
-params_option.defaultConf = default_page_conf
 
 toplevel_conf = MultiOption('toplevel', {
         MultiOption('global_config', global_conf_required,
                     global_conf_optional),
         default_page_conf,
-        PageConfOption('page_config', page_conf_required, page_conf_optional, default_page_conf)
+        PageConfOption('page_config', page_conf_required, page_conf_optional,
+                       defaultConf=default_page_conf)
         }, set())
 
 
