@@ -688,7 +688,7 @@ page_conf_required = set()
 page_conf_optional = {
         PosIntOption('max_request_payload_len'),
         params_option,
-        BoolOption('params_allowed'),
+        BoolOption('restrict_params'),
         HTTPReqsOption('request_types', minLen=1,
                        allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
         BoolOption('requires_login')

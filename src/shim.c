@@ -603,7 +603,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
             page_match->params, page_match->params_len, ev_data);
 
     if (param == NULL) {
-        if (!page_match->params_allowed) {
+        if (!page_match->restrict_params) {
             log_warn("Parameter sent when not allowed\n");
             cancel_connection(ev_data);
             return;
