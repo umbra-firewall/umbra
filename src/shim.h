@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include "http_parser.h"
 #include "bytearray.h"
+#include "config.h"
 
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
@@ -59,13 +60,12 @@ typedef enum {
 
 
 struct connection_info;
-struct page_conf;
-struct params;
 
 struct event_data {
     int listen_fd;
     int send_fd;
     http_parser parser;
+    struct params default_params;
     struct connection_info *conn_info;
     bytearray_t *url;
     struct page_conf *page_match;
@@ -99,7 +99,12 @@ void do_after_header_checks(struct event_data *ev_data);
 void check_request_type(struct event_data *ev_data);
 int http_parser_method_to_shim(enum http_method method);
 void check_url_params(struct event_data *ev_data);
-void check_arg(struct event_data *ev_data, char *arg, size_t len);
+void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
+void cancel_connection(struct event_data *ev_data);
+bool is_conn_cancelled(struct event_data *ev_data);
+void copy_default_params(struct page_conf *page_conf, struct params *params);
+struct params *find_matching_param(char *name, size_t name_len,
+        struct params *params, unsigned int params_len);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

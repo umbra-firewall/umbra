@@ -1,8 +1,5 @@
 #include "shim.h"
 
-// Include dynamic configuration
-#include "config_header.h"
-
 int connction_num = 0;
 char *http_port_str, *server_http_port_str;
 
@@ -35,8 +32,7 @@ http_parser_settings parser_settings = {
 };
 
 /* Set connection to cancelled state */
-void cancel_connection(http_parser *p) {
-    struct event_data *ev_data = (struct event_data *) p->data;
+void cancel_connection(struct event_data *ev_data) {
     ev_data->is_cancelled = true;
 }
 
@@ -60,7 +56,15 @@ int on_message_begin_cb(http_parser *p) {
  */
 struct page_conf *find_matching_page(char *url, size_t len) {
     // @Todo(Travis) Implement trie search
+
     int i;
+
+    /* Account for possible URL parameters */
+    char *amp_loc = memchr(url, '?', len);
+    if (amp_loc) {
+        len = amp_loc - url;
+    }
+
     for (i = 0; i < PAGES_CONF_LEN; i++) {
         if (len == strlen(pages_conf[i].name)
                 && memcmp(url, pages_conf[i].name, len) == 0) {
@@ -70,6 +74,12 @@ struct page_conf *find_matching_page(char *url, size_t len) {
     return &default_page_conf;
 }
 
+/* Copy default param fields in page_conf struct to params struct */
+void copy_default_params(struct page_conf *page_conf, struct params *params) {
+    params->max_param_len = page_conf->max_param_len;
+    params->whitelist = page_conf->whitelist;
+}
+
 int on_headers_complete_cb(http_parser *p) {
     log_trace("***HEADERS COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
@@ -77,6 +87,9 @@ int on_headers_complete_cb(http_parser *p) {
 
     ev_data->page_match = find_matching_page((char *) ev_data->url->data,
             ev_data->url->len);
+    log_dbg("page_match=\"%s\"\n", ev_data->page_match->name);
+
+    copy_default_params(ev_data->page_match, &ev_data->default_params);
 
     return 0;
 }
@@ -93,7 +106,7 @@ int on_url_cb(http_parser *p, const char *at, size_t length) {
     ev_data->state = URL_COMPLETE;
 
     if (bytearray_append(ev_data->url, at, length) < 0) {
-        cancel_connection(p);
+        cancel_connection(ev_data);
         log_warn("Cancelling request because out of memory\n");
         return -1;
     }
@@ -102,29 +115,35 @@ int on_url_cb(http_parser *p, const char *at, size_t length) {
     return 0;
 }
 
+#if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header field: %.*s\n", (int)length, at);
     if (length > MAX_HEADER_FIELD_LEN) {
         log_info("Blocked request because header field length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_FIELD_LEN);
-        cancel_connection(p);
+        struct event_data *ev_data = (struct event_data *) p->data;
+        cancel_connection(ev_data);
         return -1;
     }
     return 0;
 }
+#endif
 
+#if ENABLE_HEADER_VALUE_CHECK
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header value: %.*s\n", (int)length, at);
     if (length > MAX_HEADER_VALUE_LEN) {
         log_info("Blocked request because header value length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_VALUE_LEN);
-        cancel_connection(p);
+        struct event_data *ev_data = (struct event_data *) p->data;
+        cancel_connection(ev_data);
         return -1;
     }
     return 0;
 }
+#endif
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
     log_trace("Body: %.*s\n", (int)length, at);
@@ -463,20 +482,112 @@ void check_request_type(struct event_data *ev_data) {
     int http_method = http_parser_method_to_shim(method);
     if (!(ev_data->page_match->request_types & http_method)) {
         log_error("Request type %s not allowed\n", http_method_str(method));
-        cancel_connection(&ev_data->parser);
+        cancel_connection(ev_data);
     }
 }
 
+/* Find location and size of argument name and value */
+static void parse_argument_name_value(char *arg, size_t arg_len, char **name,
+        size_t *name_len, char **value, size_t *value_len) {
+    char *n, *v;
+    size_t n_len, v_len;
+
+    n = arg;
+
+    v = memchr(arg, '=', arg_len);
+    if (v == NULL) {
+        v = n + arg_len;
+        v_len = 0;
+        n_len = arg_len;
+    } else {
+        n_len = (v - n);
+        v_len = arg_len - n_len - 1;
+        v++;
+    }
+
+    *name = n;
+    *name_len = n_len;
+    *value = v;
+    *value_len = v_len;
+}
+
+/* Compares NUL terminated string to buffer that is URL encoded */
+bool str_to_url_encoded_memeq(const char *str, char *url_data,
+        size_t url_data_len) {
+    int byte;
+    char *url_data_end = url_data + url_data_len;
+    char *str_should_end = str + url_data_len;
+    while (*str && url_data < url_data_end) {
+        if (*str == *url_data) {
+            str++;
+            url_data++;
+            url_data_len--;
+        } else if (*url_data == '%') { /* Percent encoded */
+            if (url_data_len >= 3
+                    && (sscanf(url_data + 1, "%02x", &byte) == 1
+                            || sscanf(url_data + 1, "%02X", &byte) == 1)
+                    && byte == *str) {
+                str++;
+                str_should_end -= 2;  // Account for miscalculating before
+                url_data += 3;
+                url_data_len -= 3;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    return str == str_should_end && *str == '\0';
+}
+
+/* Finds matching parameter struct based on the parameter name. Returns NULL
+ * if one cannot be found */
+struct params *find_matching_param(char *name, size_t name_len,
+        struct params *params, unsigned int params_len) {
+    int i;
+    for (i = 0; i < params_len; i++) {
+        if (str_to_url_encoded_memeq(params[i].name, name, name_len)) {
+            return &params[i];
+        }
+    }
+    return NULL;
+}
+
 /* Perform argument specific checks */
-void check_arg(struct event_data *ev_data, char *arg, size_t len) {
+void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     log_dbg("arg=\"%.*s\", len=%ld\n", (int) len, arg, len);
 
     if (len <= 0) {
         log_warn("Malformed argument\n");
-        cancel_connection(&ev_data->parser);
+        cancel_connection(ev_data);
     }
-    // @Todo(Travis): do per parameter check
-    // @Todo(Travis): account for params_allowed
+
+    char *name = arg, *value;
+    size_t name_len, value_len; // Length of buffers
+
+    parse_argument_name_value(arg, len, &name, &name_len, &value, &value_len);
+
+    log_dbg("  name=\"%.*s\" len=%ld, value=\"%.*s\" len=%ld\n", (int) name_len,
+            name, name_len, (int) value_len, value, value_len);
+
+    struct page_conf *page_match = ev_data->page_match;
+    struct params *param = find_matching_param(name, name_len,
+            page_match->params, page_match->params_len);
+
+    if (param == NULL) {
+        if (!page_match->params_allowed) {
+            log_warn("Parameter sent when not allowed\n");
+            cancel_connection(ev_data);
+            return;
+        } else {
+            param = &ev_data->default_params;
+        }
+    }
+    log_dbg("Using param \"%s\"\n", param->name ? param->name : "default");
+
+    //@Todo(Travis) Do paramter-specific checks
+    param;
 }
 
 /* Check parameters passed in the URL */
@@ -497,12 +608,14 @@ void check_url_params(struct event_data *ev_data) {
     }
 
     log_dbg("query: \"%.*s\", len=%ld\n", (int) query_len, query, query_len);
+
+    /* Examine each query parameter */
     char *next = memchr(query, '&', query_len);
     size_t arg_len;
     while (query_len >= 0) {
         arg_len = next ? (next - query) : query_len;
 
-        check_arg(ev_data, query, arg_len);
+        check_single_arg(ev_data, query, arg_len);
 
         if (next == NULL) {
             break;

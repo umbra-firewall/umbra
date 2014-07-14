@@ -2,9 +2,9 @@ BIN_NORMAL = shim shim-dbg
 BIN = $(BIN_NORMAL) shim-trace config_printer
 SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c \
     http_parser.c http_parser.h
-SHIM_SRC = shim.c shim.h config_header.h http_parser.c http_parser.h \
-    bytearray.c bytearray.h
-SHIM_OBJ = shim.o http_parser.o bytearray.o
+SHIM_SRC = shim.c shim.h http_parser.c http_parser.h \
+    bytearray.c bytearray.h config.c config.h
+SHIM_OBJ = shim.o http_parser.o bytearray.o config.o
 
 # Set CROSS_COMPILE variable if needed when running make
 # Example: make CROSS_COMPILE=arm-linux-
@@ -19,8 +19,8 @@ CFLAGS_TRACE = -Wall -O0 -finstrument-functions -g -DDEBUG
 
 all: shim
 
-config_header.h: ../config/config.json ../config/parse_config.py
-	../config/parse_config.py $< $@
+config.h config.c: ../config/config.json ../config/parse_config.py
+	../config/parse_config.py $< config.h config.c
 
 debug: shim-dbg
 shim-dbg: CFLAGS := $(CFLAGS_DEBUG)
@@ -38,14 +38,15 @@ shim-trace: $(SHIM_SRC) trace.c
 $(BIN_NORMAL): $(SHIM_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
-shim.o: shim.c shim.h config_header.h
+shim.o: shim.c shim.h config.o
 bytearray.o: bytearray.c bytearray.h
 http_parser.o: http_parser.c http_parser.h
+config.o: config.c config.h
 
-config_printer: config_printer.c config_header.h
+config_printer: config_printer.c config.o
 
 clean:
-	rm -f *.o $(BIN) config_header.h
+	rm -f *.o $(BIN) config.h config.c
 
 dist-clean: clean
 	rm -f gmon.out *.pyc
