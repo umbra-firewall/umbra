@@ -702,7 +702,8 @@ enable_options = {
         BoolOption('enable_header_field_check', isTopLevel=True),
         BoolOption('enable_header_value_check', isTopLevel=True),
         BoolOption('enable_request_type_check', isTopLevel=True),
-        BoolOption('enable_param_checks', isTopLevel=True)
+        BoolOption('enable_param_checks', isTopLevel=True),
+        BoolOption('enable_param_len_check', isTopLevel=True)
 }
 global_conf_required = {
         StringOption('https_certificate', isTopLevel=True),

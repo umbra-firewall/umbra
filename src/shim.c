@@ -513,10 +513,10 @@ static void parse_argument_name_value(char *arg, size_t arg_len, char **name,
 
 /* Compares NUL terminated string to buffer that is URL encoded */
 bool str_to_url_encoded_memeq(const char *str, char *url_data,
-        size_t url_data_len) {
+        size_t url_data_len, struct event_data *ev_data) {
     int byte;
     char *url_data_end = url_data + url_data_len;
-    char *str_should_end = str + url_data_len;
+    char *str_should_end = (char *) (str + url_data_len);
     while (*str && url_data < url_data_end) {
         if (*str == *url_data) {
             str++;
@@ -532,6 +532,8 @@ bool str_to_url_encoded_memeq(const char *str, char *url_data,
                 url_data += 3;
                 url_data_len -= 3;
             } else {
+                log_warn("Invalid URL encoding\n");
+                cancel_connection(ev_data);
                 return false;
             }
         } else {
@@ -544,14 +546,39 @@ bool str_to_url_encoded_memeq(const char *str, char *url_data,
 /* Finds matching parameter struct based on the parameter name. Returns NULL
  * if one cannot be found */
 struct params *find_matching_param(char *name, size_t name_len,
-        struct params *params, unsigned int params_len) {
+        struct params *params, unsigned int params_len,
+        struct event_data *ev_data) {
     int i;
     for (i = 0; i < params_len; i++) {
-        if (str_to_url_encoded_memeq(params[i].name, name, name_len)) {
+        if (str_to_url_encoded_memeq(params[i].name, name, name_len, ev_data)) {
             return &params[i];
         }
     }
     return NULL;
+}
+
+/* Returns whether character corresponds to a hexadecimal digit */
+bool is_hex_digit(char c) {
+    return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F');
+}
+
+
+/* Calculates the number of decoded bytes are in a argument value */
+size_t url_encode_buf_len(char *data, size_t len, struct event_data *ev_data) {
+    size_t ret_len = len;
+    size_t i;
+    for (i = 0; i < len; i++) {
+        if (*data == '%') {
+            if (i + 2 < len && is_hex_digit(data[1]) && is_hex_digit(data[2])) {
+                data += 3;
+                ret_len -= 2;
+            } else {
+                log_warn("Invalid URL encoding found during length check\n");
+                cancel_connection(ev_data);
+            }
+        }
+    }
+    return len;
 }
 
 /* Perform argument specific checks */
@@ -573,7 +600,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
 
     struct page_conf *page_match = ev_data->page_match;
     struct params *param = find_matching_param(name, name_len,
-            page_match->params, page_match->params_len);
+            page_match->params, page_match->params_len, ev_data);
 
     if (param == NULL) {
         if (!page_match->params_allowed) {
@@ -586,8 +613,17 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     }
     log_dbg("Using param \"%s\"\n", param->name ? param->name : "default");
 
-    //@Todo(Travis) Do paramter-specific checks
-    param;
+    /* Enforce maximum parameter length */
+#if ENABLE_PARAM_LEN_CHECK
+    size_t url_decode_len = url_encode_buf_len(value, value_len, ev_data);
+    if (url_decode_len > param->max_param_len) {
+        log_warn("Length of parameter value \"%.*s\" %ld exceeds max %d\n",
+                (int ) value_len, value, url_decode_len, param->max_param_len);
+        cancel_connection(ev_data);
+    }
+#endif
+
+    //@Todo(Travis) check whitelist
 }
 
 /* Check parameters passed in the URL */
@@ -692,6 +728,8 @@ int handle_client_event(struct epoll_event *ev) {
             do_after_header_checks(ev_data);
             ev_data->have_done_after_header_checks = true;
         }
+
+        //@Todo(Travis) check POST parameters
 
         if (is_conn_cancelled(ev_data)) {
             if (send_error_page(ev_data->listen_fd)) {

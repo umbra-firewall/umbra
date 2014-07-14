@@ -104,7 +104,10 @@ void cancel_connection(struct event_data *ev_data);
 bool is_conn_cancelled(struct event_data *ev_data);
 void copy_default_params(struct page_conf *page_conf, struct params *params);
 struct params *find_matching_param(char *name, size_t name_len,
-        struct params *params, unsigned int params_len);
+        struct params *params, unsigned int params_len,
+        struct event_data *ev_data);
+size_t url_encode_buf_len(char *data, size_t len, struct event_data *ev_data);
+bool is_hex_digit(char c);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);
