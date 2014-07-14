@@ -213,9 +213,9 @@ class CodeHeader:
         f.write('/* Struct definitions */\n\n')
         for sd in self.struct_defs:
             f.write(sd.to_string() + '\n')
-        f.write('\n')
 
         f.write('\n#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))\n')
+        f.write('\n#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK)\n\n')
 
         f.write('/* Global variables */\n\n')
         for sd in self.page_conf_arrays:
@@ -698,11 +698,11 @@ default_page_conf_required = {x for x in page_conf_required.union(page_conf_opti
                               if x.name not in ['params']}
 default_page_conf_optional = set()
 
+# Update ENABLE_PARAM_CHECKS to depend on parameter options
 enable_options = {
         BoolOption('enable_header_field_check', isTopLevel=True),
         BoolOption('enable_header_value_check', isTopLevel=True),
         BoolOption('enable_request_type_check', isTopLevel=True),
-        BoolOption('enable_param_checks', isTopLevel=True),
         BoolOption('enable_param_len_check', isTopLevel=True)
 }
 global_conf_required = {

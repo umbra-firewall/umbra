@@ -326,6 +326,7 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->have_done_after_header_checks = false;
 
         if ((ev_data->url = new_bytearray()) == NULL) {
+            log_warn("Allocating new bytearray failed");
             free(ev_data);
             return NULL;
         }
