@@ -1,8 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "shim.h"
-
-#include "config_header.h"
+#include "config.h"
 
 #define TAB_SIZE 4
 
@@ -41,10 +40,41 @@ void print_http_req_field(int r) {
     print_http_req_part(CONNECT);
 }
 
+void print_whitelist(const char *w) {
+    int i;
+    for (i = 0; i < WHITELIST_PARAM_LEN; i++) {
+        printf("%02hhx", w[i]);
+        if (i % 4 == 3) {
+            printf(" ");
+        }
+    }
+}
+
+bool whitelist_char_allowed(const char *whitelist, const char x) {
+    unsigned const char c = (unsigned const char) x;
+    unsigned int byte = c / 8;
+    unsigned int bit = c % 8;
+    unsigned char mask = 1 << bit;
+    return (whitelist[byte] & mask) != 0;
+}
+
+void print_whitelist2(const char *w) {
+    int i;
+    for (i = 0; i < 256; i++) {
+        if (char_allowed(w, i)) {
+            printf("%02hhx ", i);
+        }
+    }
+}
+
 #define printf_indent(depth, args...) print_indent(depth); printf(args)
 
-#define print_str_field(item) printf_indent(depth + 1, "." #item " = \"%s\"\n", \
-        p->item)
+#define print_str_field(item) printf_indent(depth + 1, "." #item " = \"%.*s\"\n", \
+        WHITELIST_PARAM_LEN, p->item)
+#define print_whitelist_field(item) printf_indent(depth + 1, "." #item " = "); \
+        print_whitelist(p->item) ; printf("\n")
+#define print_whitelist2_field(item) printf_indent(depth + 1, "." #item " = "); \
+        print_whitelist2(p->item) ; printf("\n")
 #define print_int_field(item) printf_indent(depth + 1, "." #item " = %d\n", \
         p->item)
 #define print_http_req_field(item) printf_indent(depth + 1, "." #item " = "); \
@@ -54,7 +84,8 @@ void print_http_req_field(int r) {
 
 void print_params(struct params *p, int depth) {
     printf_indent(depth, "\"%s\" {\n", p->name);
-    print_str_field(whitelist);
+    print_whitelist_field(whitelist);
+    print_whitelist2_field(whitelist);
     print_int_field(max_param_len);
     printf_indent(depth, "}\n");
 }
@@ -64,10 +95,11 @@ void print_page_conf(struct page_conf *p, int depth) {
 
     printf_indent(depth, "\"%s\" {\n", p->name);
 
-    print_str_field(whitelist);
+    print_whitelist_field(whitelist);
+    print_whitelist2_field(whitelist);
     print_int_field(max_param_len);
     print_int_field(max_request_payload_len);
-    print_bool_field(params_allowed);
+    print_bool_field(restrict_params);
     print_http_req_field(request_types);
     print_bool_field(requires_login);
     print_int_field(params_len);
@@ -92,6 +124,14 @@ int main(int argc, char **argv) {
     print_str_arr(successful_login_pages);
     print_int_macro(MAX_HEADER_VALUE_LEN);
 
+    printf("\n** Enable Config **\n");
+    print_bool_macro(ENABLE_HEADER_FIELD_CHECK);
+    print_bool_macro(ENABLE_HEADER_VALUE_CHECK);
+    print_bool_macro(ENABLE_REQUEST_TYPE_CHECK);
+    print_bool_macro(ENABLE_PARAM_CHECKS);
+    print_bool_macro(ENABLE_PARAM_LEN_CHECK);
+    print_bool_macro(ENABLE_PARAM_WHITELIST_CHECK);
+
     printf("\n** Global Page Defaults **\n");
     print_page_conf(&default_page_conf, 0);
 
@@ -101,7 +141,6 @@ int main(int argc, char **argv) {
     for (i = 0; i < PAGES_CONF_LEN; i++) {
         print_page_conf(&pages_conf[i], 0);
     }
-    printf("}\n");
 
     return 0;
 }

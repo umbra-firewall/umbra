@@ -326,7 +326,7 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->have_done_after_header_checks = false;
 
         if ((ev_data->url = new_bytearray()) == NULL) {
-            log_warn("Allocating new bytearray failed");
+            log_warn("Allocating new bytearray failed\n");
             free(ev_data);
             return NULL;
         }
@@ -524,9 +524,7 @@ bool str_to_url_encoded_memeq(const char *str, char *url_data,
             url_data++;
             url_data_len--;
         } else if (*url_data == '%') { /* Percent encoded */
-            if (url_data_len >= 3
-                    && (sscanf(url_data + 1, "%02x", &byte) == 1
-                            || sscanf(url_data + 1, "%02X", &byte) == 1)
+            if (url_data_len >= 3 && sscanf(url_data + 1, "%02x", &byte) == 1
                     && byte == *str) {
                 str++;
                 str_should_end -= 2;  // Account for miscalculating before
@@ -563,23 +561,62 @@ bool is_hex_digit(char c) {
     return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F');
 }
 
+/* Checks if character is allowed by whitelist, cancelling the connection if it
+ * is not */
+void check_char_whitelist(const char *whitelist, const char c,
+        struct event_data *ev_data) {
+    if (!whitelist_char_allowed(whitelist, c)) {
+        log_info("Character '\\x%02hhx' not allowed\n", c);
+        cancel_connection(ev_data);
+    }
+}
 
 /* Calculates the number of decoded bytes are in a argument value */
-size_t url_encode_buf_len(char *data, size_t len, struct event_data *ev_data) {
+size_t url_encode_buf_len_whitelist(char *data, size_t len,
+        struct event_data *ev_data, const char *whitelist) {
     size_t ret_len = len;
     size_t i;
+    char byte;
     for (i = 0; i < len; i++) {
-        if (*data == '%') {
-            if (i + 2 < len && is_hex_digit(data[1]) && is_hex_digit(data[2])) {
+        if (*data == '%') { /* URL encoded byte */
+            if (i + 2 < len && sscanf(data + 1, "%02hhx", &byte) == 1) {
                 data += 3;
                 ret_len -= 2;
+#if ENABLE_PARAM_WHITELIST_CHECK
+                check_char_whitelist(whitelist, byte, ev_data);
+#endif
             } else {
                 log_warn("Invalid URL encoding found during length check\n");
                 cancel_connection(ev_data);
             }
+        } else {
+#if ENABLE_PARAM_WHITELIST_CHECK
+            check_char_whitelist(whitelist, *data, ev_data);
+#endif
         }
     }
     return len;
+}
+
+/* Returns whether character is allowed according to whitelist */
+bool whitelist_char_allowed(const char *whitelist, const char x) {
+    unsigned const char c = (unsigned const char) x;
+    unsigned int byte = c / 8;
+    unsigned int bit = c % 8;
+    unsigned char mask = 1 << bit;
+    return (whitelist[byte] & mask) != 0;
+}
+
+/* Enforce maximum parameter length */
+void check_arg_len_whitelist(struct params *param, char *value,
+        size_t value_len, struct event_data *ev_data) {
+    size_t url_decode_len = url_encode_buf_len_whitelist(value, value_len,
+            ev_data, param->whitelist);
+    if (url_decode_len > param->max_param_len) {
+        log_warn("Length of parameter value \"%.*s\" %ld exceeds max %d\n",
+                (int ) value_len, value, url_decode_len, param->max_param_len);
+        cancel_connection(ev_data);
+    }
 }
 
 /* Perform argument specific checks */
@@ -614,17 +651,9 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     }
     log_dbg("Using param \"%s\"\n", param->name ? param->name : "default");
 
-    /* Enforce maximum parameter length */
-#if ENABLE_PARAM_LEN_CHECK
-    size_t url_decode_len = url_encode_buf_len(value, value_len, ev_data);
-    if (url_decode_len > param->max_param_len) {
-        log_warn("Length of parameter value \"%.*s\" %ld exceeds max %d\n",
-                (int ) value_len, value, url_decode_len, param->max_param_len);
-        cancel_connection(ev_data);
-    }
+#if ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK
+    check_arg_len_whitelist(param, value, value_len, ev_data);
 #endif
-
-    //@Todo(Travis) check whitelist
 }
 
 /* Check parameters passed in the URL */
@@ -719,7 +748,7 @@ int handle_client_event(struct epoll_event *ev) {
 
         if (ev_data->parser.upgrade) {
             /* Wants to upgrade connection */
-            log_warn("HTTP upgrade not supported");
+            log_warn("HTTP upgrade not supported\n");
             done = 1;
             break;
         }

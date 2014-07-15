@@ -44,6 +44,7 @@ http_parser.o: http_parser.c http_parser.h
 config.o: config.c config.h
 
 config_printer: config_printer.c config.o
+	$(CC) $(CFLAGS_DEBUG) -o $@ $^
 
 clean:
 	rm -f *.o $(BIN) config.h config.c

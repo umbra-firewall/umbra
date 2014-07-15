@@ -7,6 +7,8 @@
 import copy
 import json
 import os
+import re
+import struct
 import sys
 
 
@@ -39,7 +41,16 @@ def assert_parse(value, msg):
 
 def c_str_repr(s):
     """Returns representation of string in C (without quotes)"""
-    return '"%s"' % repr(unicode(s))[2:-1]
+    def byte_to_repr(c):
+        x = ord(c)
+        if x in ['"', '\\', '\r', '\n']:
+            return '\\' + chr(x)
+        elif ord(' ') <= x <= ord('^') or x == ord('_') or ord('a') <= x <= ord('~'):
+            return chr(x)
+        else:
+            return '\\x%02x' % x
+
+    return '"%s"' % ''.join((byte_to_repr(x) for x in s))
 
 
 def dict_updated(d, e):
@@ -111,7 +122,10 @@ class StringArrInst(VarInst):
 
     def to_string(self):
         s = '{%s}' % ', '.join([c_str_repr(x) for x in self.value])
-        return 'const char *%s[] = %s;\n' % (self.name, s)
+        return 'const char *%s[%d] = %s;\n' % (self.name, len(self.value), s)
+
+    def to_proto_string(self):
+        return 'const char *%s[%d];\n' % (self.name, len(self.value))
 
 
 class StructArrInst(VarInst):
@@ -215,14 +229,21 @@ class CodeHeader:
             f.write(sd.to_string() + '\n')
 
         f.write('\n#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))\n')
-        f.write('\n#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK)\n\n')
+        f.write('#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK)\n')
+        f.write('#define WHITELIST_PARAM_LEN %d\n' % WhitelistOption.num_bytes)
+
+        f.write('\n')
 
         f.write('/* Global variables */\n\n')
         for sd in self.page_conf_arrays:
             f.write("extern ")
             f.write(sd.to_string_declaration() + '\n')
 
+
         f.write('extern struct page_conf default_page_conf;\n')
+        for vd in self.var_defs:
+            f.write('extern ')
+            f.write(vd.to_proto_string() + '\n')
 
         f.write(headerFooter)
 
@@ -406,6 +427,29 @@ class StringOption(Option):
 
     def getCValue(self):
         return c_str_repr(self.value)
+
+
+class WhitelistOption(StringOption):
+    """Represents option where certain characters are whitelisted"""
+
+    num_bytes = 0x100 / 8
+
+    def getCType(self):
+        return 'const char *'
+
+    def getCValue(self):
+        chars = []
+        byte = 0
+        for i in range(0x100):
+            byte_idx = i % 8
+            c = chr(i)
+            if re.match(self.value, c):
+                byte |= (1 << byte_idx)
+            if byte_idx == 7:
+                chars.append(byte)
+                byte = 0
+
+        return c_str_repr(struct.pack(WhitelistOption.num_bytes * 'B', *chars))
 
 
 class StringArrOption(Option):
@@ -680,7 +724,7 @@ class ParamsOption(NamedOptionSet):
 param_conf_required = set()
 param_conf_optional = {
         PosIntOption('max_param_len'),
-        StringOption('whitelist', '')
+        WhitelistOption('whitelist')
         }
 
 params_option = ParamsOption('params', param_conf_required, param_conf_optional)
@@ -703,7 +747,8 @@ enable_options = {
         BoolOption('enable_header_field_check', isTopLevel=True),
         BoolOption('enable_header_value_check', isTopLevel=True),
         BoolOption('enable_request_type_check', isTopLevel=True),
-        BoolOption('enable_param_len_check', isTopLevel=True)
+        BoolOption('enable_param_len_check', isTopLevel=True),
+        BoolOption('enable_param_whitelist_check', isTopLevel=True)
 }
 global_conf_required = {
         StringOption('https_certificate', isTopLevel=True),

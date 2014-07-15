@@ -106,8 +106,14 @@ void copy_default_params(struct page_conf *page_conf, struct params *params);
 struct params *find_matching_param(char *name, size_t name_len,
         struct params *params, unsigned int params_len,
         struct event_data *ev_data);
-size_t url_encode_buf_len(char *data, size_t len, struct event_data *ev_data);
+size_t url_encode_buf_len_whitelist(char *data, size_t len,
+        struct event_data *ev_data, const char *whitelist);
 bool is_hex_digit(char c);
+void check_arg_len_whitelist(struct params *param, char *value, size_t value_len,
+        struct event_data *ev_data);
+bool whitelist_char_allowed(const char *whitelist, const char x);
+void check_char_whitelist(const char *whitelist, const char c,
+        struct event_data *ev_data);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);
