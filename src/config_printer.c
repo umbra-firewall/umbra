@@ -61,7 +61,7 @@ bool whitelist_char_allowed(const char *whitelist, const char x) {
 void print_whitelist2(const char *w) {
     int i;
     for (i = 0; i < 256; i++) {
-        if (char_allowed(w, i)) {
+        if (whitelist_char_allowed(w, i)) {
             printf("%02hhx ", i);
         }
     }
@@ -110,11 +110,11 @@ void print_page_conf(struct page_conf *p, int depth) {
     }
     printf_indent(depth + 1, "},\n");
 
-    printf_indent(depth, "},\n");
+    printf_indent(depth, "},\n\n");
 }
 
 int main(int argc, char **argv) {
-    int i, j;
+    int i;
     init_config_vars();
 
     printf("** Global Config **\n");
