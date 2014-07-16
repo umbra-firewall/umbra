@@ -68,6 +68,7 @@ struct event_data {
     struct params default_params;
     struct connection_info *conn_info;
     bytearray_t *url;
+    bytearray_t *body;
     struct page_conf *page_match;
     event_t type : 8;
     conn_state_t state : 8;
@@ -97,7 +98,8 @@ struct connection_info *init_conn_info(int infd, int outfd);
 void do_header_complete_checks(struct event_data *ev_data);
 void check_request_type(struct event_data *ev_data);
 int http_parser_method_to_shim(enum http_method method);
-void check_url_params(struct event_data *ev_data);
+void check_buffer_params(bytearray_t *buf, bool is_url_param,
+        struct event_data *ev_data);
 void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
 void cancel_connection(struct event_data *ev_data);
 bool is_conn_cancelled(struct event_data *ev_data);
@@ -112,6 +114,8 @@ void check_arg_len_whitelist(struct params *param, char *value, size_t value_len
         struct event_data *ev_data);
 bool whitelist_char_allowed(const char *whitelist, const char x);
 int check_char_whitelist(const char *whitelist, const char c,
+        struct event_data *ev_data);
+int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data);
 
 /* HTTP parser callbacks */

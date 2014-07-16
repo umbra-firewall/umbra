@@ -94,6 +94,24 @@ int on_message_complete_cb(http_parser *p) {
     log_trace("***MESSAGE COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->state = MESSAGE_COMPLETE;
+
+#if ENABLE_PARAM_CHECKS
+    /* Check POST parameters */
+    if (p->method == HTTP_POST) { /* Use http_parser macro */
+        check_buffer_params(ev_data->body, false, ev_data);
+    }
+#endif
+
+    return 0;
+}
+
+int update_bytearray(bytearray_t *b, const char *at, size_t length,
+        struct event_data *ev_data) {
+    if (bytearray_append(b, at, length) < 0) {
+        cancel_connection(ev_data);
+        log_warn("Cancelling request because out of memory\n");
+        return -1;
+    }
     return 0;
 }
 
@@ -101,9 +119,7 @@ int on_url_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->state = URL_COMPLETE;
 
-    if (bytearray_append(ev_data->url, at, length) < 0) {
-        cancel_connection(ev_data);
-        log_warn("Cancelling request because out of memory\n");
+    if (update_bytearray(ev_data->url, at, length, ev_data) < 0) {
         return -1;
     }
     log_trace("Url: \"%.*s\"\n", (int) ev_data->url->len, ev_data->url->data);
@@ -142,7 +158,15 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 #endif
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
-    log_trace("Body: %.*s\n", (int)length, at);
+#if ENABLE_PARAM_CHECKS
+    if (p->method == HTTP_POST) { /* Use http_parser macro */
+        struct event_data *ev_data = (struct event_data *) p->data;
+        if (update_bytearray(ev_data->body, at, length, ev_data) < 0) {
+            return -1;
+        }
+        log_trace("POST Body: \"%.*s\"\n", (int) ev_data->body->len, ev_data->body->data);
+    }
+#endif
     return 0;
 }
 
@@ -266,6 +290,7 @@ void free_event_data(struct event_data *ev) {
     //log_trace("Freeing event data %p\n", ev);
     if (ev != NULL) {
         bytearray_free(ev->url);
+        bytearray_free(ev->body);
         free(ev);
     }
 }
@@ -329,8 +354,12 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
 
         if ((ev_data->url = new_bytearray()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
-            free(ev_data);
-            return NULL;
+            goto error;
+        }
+
+        if ((ev_data->body = new_bytearray()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            goto error;
         }
 
         http_parser_init(&ev_data->parser, parser_type);
@@ -338,6 +367,12 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     }
 
     return ev_data;
+
+error:
+    free(ev_data->url);
+    free(ev_data->body);
+    free(ev_data);
+    return NULL;
 }
 
 /* Initialize connection_info structure */
@@ -655,7 +690,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
             page_match->params, page_match->params_len, ev_data);
 
     if (param == NULL) {
-        if (!page_match->restrict_params) {
+        if (page_match->restrict_params) {
             log_warn("Parameter sent when not allowed\n");
             cancel_connection(ev_data);
             return;
@@ -671,17 +706,24 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
 }
 
 /* Check parameters passed in the URL */
-void check_url_params(struct event_data *ev_data) {
-    log_trace("Checking URL parameters\n");
-    bytearray_t *url = ev_data->url;
-    char *quest = memchr(url->data, '?', url->len);
-    if (quest == NULL) {
-        log_trace("URL has no parameters\n");
-        return;
-    }
+void check_buffer_params(bytearray_t *buf, bool is_url_param,
+        struct event_data *ev_data) {
+    log_trace("Checking %s parameters\n", is_url_param ? "URL" : "POST");
+    char *query;
+    size_t query_len;
 
-    char *query = quest + 1;
-    size_t query_len = url->len - (query - url->data);
+    if (is_url_param) {
+        char *quest = memchr(buf->data, '?', buf->len);
+        if (quest == NULL) {
+            log_trace("URL has no parameters\n");
+            return;
+        }
+        query = quest + 1;
+        query_len = buf->len - (query - buf->data);
+    } else {
+        query = buf->data;
+        query_len = buf->len;
+    }
 
     if (query_len <= 0) {
         log_trace("Empty query\n");
@@ -720,7 +762,8 @@ void do_header_complete_checks(struct event_data *ev_data) {
 #endif
 
 #if ENABLE_PARAM_CHECKS
-    check_url_params(ev_data);
+    /* Check URL parameters */
+    check_buffer_params(ev_data->url, true, ev_data);
 #endif
 }
 
@@ -837,6 +880,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
          ready for reading (why were we notified then?) */
         log_error("epoll error\n");
         free_connection_info(ev_data->conn_info);
+        ev->data.ptr = NULL;
         return;
 
     } else if (sfd == ev_data->listen_fd) {
@@ -844,6 +888,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
          means one or more incoming connections. */
         if (handle_new_connection(efd, ev, sfd) < 0) {
             free_connection_info(ev_data->conn_info);
+            ev->data.ptr = NULL;
         }
         return;
 
@@ -853,7 +898,6 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
          completely, as we are running in edge-triggered mode
          and won't get a notification again for the same
          data. */
-        struct event_data *ev_data = (struct event_data *) ev->data.ptr;
 
         if (ev_data->type == CLIENT_LISTENER) {
             done = handle_client_event(ev);
@@ -866,6 +910,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
 
         if (done) {
             free_connection_info(ev_data->conn_info);
+            ev->data.ptr = NULL;
         }
     }
 
