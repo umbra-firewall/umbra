@@ -750,15 +750,6 @@ int handle_client_event(struct epoll_event *ev) {
             done = 1;
         }
 
-#ifdef PRINT_CONVERSATION
-        /* Write the buffer to standard output */
-        s = write(1, ">> ", 3);
-        s = write(1, buf, count);
-        if (s == -1) {
-            perror("write");
-        }
-#endif
-
         nparsed = http_parser_execute(&ev_data->parser, &parser_settings, buf,
                 count);
 
@@ -828,15 +819,6 @@ int handle_server_event(struct epoll_event *ev) {
             done = 1;
             break;
         }
-
-#ifdef PRINT_CONVERSATION
-        /* Write the buffer to standard output */
-        s = write(1, "<< ", 3);
-        s = write(1, buf, count);
-        if (s == -1) {
-            perror("write");
-        }
-#endif
 
         s = sendall(((struct event_data *) ev->data.ptr)->send_fd, buf, count);
         if (s < 0) {
