@@ -184,7 +184,7 @@ int create_and_bind(char *port) {
 
     s = getaddrinfo(NULL, port, &hints, &result);
     if (s != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        log_info("getaddrinfo: %s\n", gai_strerror(s));
         return -1;
     }
 
@@ -210,7 +210,7 @@ int create_and_bind(char *port) {
     }
 
     if (rp == NULL) {
-        fprintf(stderr, "Could not bind\n");
+        log_error("Could not bind\n");
         return -1;
     }
 
@@ -222,15 +222,15 @@ int create_and_bind(char *port) {
 /* Create listening socket */
 int create_and_connect(char *port) {
     int sockfd, rv;
-    struct addrinfo hints, *servinfo, *p;
+    struct addrinfo hints, *servinfo = NULL, *p = NULL;
 
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
     if ((rv = getaddrinfo("127.0.0.1", port, &hints, &servinfo)) != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-        return -1;
+        log_info("getaddrinfo: %s\n", gai_strerror(rv));
+        goto error;
     }
 
     // loop through all the results and connect to the first we can
@@ -251,13 +251,17 @@ int create_and_connect(char *port) {
     }
 
     if (p == NULL) {
-        fprintf(stderr, "client: failed to connect\n");
-        return -1;
+        log_error("client: failed to connect\n");
+        goto error;
     }
 
-    freeaddrinfo(servinfo); // all done with this structure
-
     return sockfd;
+
+error:
+    if (servinfo) {
+        freeaddrinfo(servinfo);
+    }
+    return -1;
 }
 
 /* Free memory associated with event data */
@@ -271,8 +275,8 @@ void free_event_data(struct event_data *ev) {
 
 /* Free memory and close sockets associated with connection structure */
 void free_connection_info(struct connection_info *ci) {
-    log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
     if (ci != NULL) {
+        log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
             if (listen_fd && close(listen_fd)) {
@@ -288,6 +292,8 @@ void free_connection_info(struct connection_info *ci) {
         free_event_data(ci->server_ev_data);
 
         free(ci);
+    } else {
+        log_trace("Freeing NULL conn info (%d total)\n", num_conn_infos);
     }
 }
 
@@ -374,7 +380,7 @@ fail:
 }
 
 /* Handle a new incoming connection */
-void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     int s;
     struct epoll_event client_event, server_event;
     struct connection_info *conn_info;
@@ -411,27 +417,27 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
          list of fds to monitor. */
         s = make_socket_non_blocking(infd);
         if (s < 0) {
-            fprintf(stderr, "Could not make new socket non-blocking\n");
-            abort();
+            log_error("Could not make new socket non-blocking\n");
+            return -1;
         }
 
         /* Create proxy socket to server */
         outfd = create_and_connect(server_http_port_str);
         if (outfd < 0) {
-            abort();
+            return -1;
         }
 
         s = make_socket_non_blocking(outfd);
         if (s < 0) {
-            fprintf(stderr, "Could not make forward socket non-blocking\n");
-            abort();
+            log_error("Could not make forward socket non-blocking\n");
+            return -1;
         }
 
         /* Allocate data */
         conn_info = init_conn_info(infd, outfd);
         if (conn_info == NULL) {
-            puts("init_conn_info() failed");
-            abort();
+            log_error("init_conn_info() failed");
+            return -1;
         }
 
         client_event.data.ptr = conn_info->client_ev_data;
@@ -443,15 +449,17 @@ void handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &client_event);
         if (s == -1) {
             perror("epoll_ctl");
-            abort();
+            return -1;
         }
 
         s = epoll_ctl(efd, EPOLL_CTL_ADD, outfd, &server_event);
         if (s == -1) {
             perror("epoll_ctl");
-            abort();
+            return -1;
         }
     }
+
+    return 0;
 }
 
 /* Send a error page back on a socket */
@@ -562,40 +570,49 @@ bool is_hex_digit(char c) {
 }
 
 /* Checks if character is allowed by whitelist, cancelling the connection if it
- * is not */
-void check_char_whitelist(const char *whitelist, const char c,
+ * is not. Returns -1 on error, otherwise 0. */
+int check_char_whitelist(const char *whitelist, const char c,
         struct event_data *ev_data) {
     if (!whitelist_char_allowed(whitelist, c)) {
         log_info("Character '\\x%02hhx' not allowed\n", c);
         cancel_connection(ev_data);
+        return -1;
     }
+
+    return 0;
 }
 
 /* Calculates the number of decoded bytes are in a argument value */
 size_t url_encode_buf_len_whitelist(char *data, size_t len,
         struct event_data *ev_data, const char *whitelist) {
     size_t ret_len = len;
-    size_t i;
+    char *data_end = data + len;
     char byte;
-    for (i = 0; i < len; i++) {
+    while (data < data_end) {
         if (*data == '%') { /* URL encoded byte */
-            if (i + 2 < len && sscanf(data + 1, "%02hhx", &byte) == 1) {
+            if (data + 2 < data_end && sscanf(data + 1, "%02hhx", &byte) == 1) {
                 data += 3;
                 ret_len -= 2;
 #if ENABLE_PARAM_WHITELIST_CHECK
-                check_char_whitelist(whitelist, byte, ev_data);
+                if (check_char_whitelist(whitelist, byte, ev_data) < 0) {
+                    return 0;
+                }
 #endif
             } else {
                 log_warn("Invalid URL encoding found during length check\n");
                 cancel_connection(ev_data);
+                return 0;
             }
         } else {
 #if ENABLE_PARAM_WHITELIST_CHECK
-            check_char_whitelist(whitelist, *data, ev_data);
+            if (check_char_whitelist(whitelist, *data, ev_data) < 0) {
+                return 0;
+            }
 #endif
+            data++;
         }
     }
-    return len;
+    return ret_len;
 }
 
 /* Returns whether character is allowed according to whitelist */
@@ -612,6 +629,7 @@ void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data) {
     size_t url_decode_len = url_encode_buf_len_whitelist(value, value_len,
             ev_data, param->whitelist);
+    log_dbg("  decode_len=%ld\n", url_decode_len);
     if (url_decode_len > param->max_param_len) {
         log_warn("Length of parameter value \"%.*s\" %ld exceeds max %d\n",
                 (int ) value_len, value, url_decode_len, param->max_param_len);
@@ -833,19 +851,22 @@ int handle_server_event(struct epoll_event *ev) {
 /* Handle epoll event */
 void handle_event(int efd, struct epoll_event *ev, int sfd) {
     int done;
+    struct event_data *ev_data = (struct event_data *) (ev->data.ptr);
 
     if ((ev->events & EPOLLERR) || (ev->events & EPOLLHUP)
             || (!(ev->events & EPOLLIN))) {
         /* An error has occured on this fd, or the socket is not
          ready for reading (why were we notified then?) */
-        fprintf(stderr, "epoll error\n");
-        free_connection_info(((struct event_data *) (ev->data.ptr))->conn_info);
+        log_error("epoll error\n");
+        free_connection_info(ev_data->conn_info);
         return;
 
-    } else if (sfd == ((struct event_data *) ev->data.ptr)->listen_fd) {
+    } else if (sfd == ev_data->listen_fd) {
         /* We have a notification on the listening socket, which
          means one or more incoming connections. */
-        handle_new_connection(efd, ev, sfd);
+        if (handle_new_connection(efd, ev, sfd) < 0) {
+            free_connection_info(ev_data->conn_info);
+        }
         return;
 
     } else if (ev->data.ptr != NULL) {
@@ -861,7 +882,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
         } else if (ev_data->type == SERVER_LISTENER) {
             done = handle_server_event(ev);
         } else {
-            fprintf(stderr, "Invalid event_data type \"%d\"\n", ev_data->type);
+            log_error("Invalid event_data type \"%d\"\n", ev_data->type);
             done = 1;
         }
 
@@ -946,7 +967,7 @@ int main(int argc, char *argv[]) {
     memset(&event, 0, sizeof(struct epoll_event));
 
     if (argc != 3 && argc != 4) {
-        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n", argv[0]);
+        log_error("Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 

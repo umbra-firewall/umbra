@@ -90,7 +90,7 @@ int sendall(int sockfd, const void *buf, size_t len);
 void handle_event(int efd, struct epoll_event *ev, int sfd);
 int handle_client_event(struct epoll_event *ev);
 int handle_server_event(struct epoll_event *ev);
-void handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd);
 void init_error_page(char *error_page_file);
 void init_structures(char *error_page_file);
 void init_page_conf();
@@ -112,7 +112,7 @@ bool is_hex_digit(char c);
 void check_arg_len_whitelist(struct params *param, char *value, size_t value_len,
         struct event_data *ev_data);
 bool whitelist_char_allowed(const char *whitelist, const char x);
-void check_char_whitelist(const char *whitelist, const char c,
+int check_char_whitelist(const char *whitelist, const char c,
         struct event_data *ev_data);
 
 /* HTTP parser callbacks */
