@@ -98,7 +98,6 @@ void print_page_conf(struct page_conf *p, int depth) {
     print_whitelist_field(whitelist);
     print_whitelist2_field(whitelist);
     print_int_field(max_param_len);
-    print_int_field(max_request_payload_len);
     print_bool_field(restrict_params);
     print_http_req_field(request_types);
     print_bool_field(requires_login);

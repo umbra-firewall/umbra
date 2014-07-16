@@ -117,6 +117,7 @@ int check_char_whitelist(const char *whitelist, const char c,
         struct event_data *ev_data);
 int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data);
+void check_url_dir_traversal(struct event_data *ev_data);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

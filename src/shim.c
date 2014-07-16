@@ -749,6 +749,47 @@ void check_buffer_params(bytearray_t *buf, bool is_url_param,
     }
 }
 
+/* Cancels connection if url contains ".." */
+#if ENABLE_URL_DIRECTORY_TRAVERSAL_CHECK
+void check_url_dir_traversal(struct event_data *ev_data) {
+    log_trace("Checking URL for directory traversal attack\n");
+    char *data = ev_data->url->data;
+    int num_dots = 0;
+    char byte;
+    char *data_end;
+
+    /* Do not look at URL parameters */
+    char *quest = memchr(data, '?', ev_data->url->len);
+    data_end = (quest ? quest : data + ev_data->url->len);
+
+
+    while (data < data_end) {
+        if (*data == '%') { /* URL encoded byte */
+            if (data + 2 < data_end && sscanf(data + 1, "%02hhx", &byte) == 1) {
+                if (byte == '.') {
+                    num_dots++;
+                }
+                data += 3;
+            } else {
+                log_warn("Invalid URL encoding found during length check\n");
+                cancel_connection(ev_data);
+            }
+        } else {
+            if (*data == '.') {
+                num_dots++;
+            }
+            data++;
+        }
+
+        if (num_dots >= 2) {
+            log_warn("Possible URL directory traversal blocked\n");
+            cancel_connection(ev_data);
+            return;
+        }
+    }
+}
+#endif
+
 /* Do checks that are possible after the header is received */
 void do_header_complete_checks(struct event_data *ev_data) {
     ev_data->page_match = find_matching_page((char *) ev_data->url->data,
@@ -759,6 +800,10 @@ void do_header_complete_checks(struct event_data *ev_data) {
 
 #if ENABLE_REQUEST_TYPE_CHECK
     check_request_type(ev_data);
+#endif
+
+#if ENABLE_URL_DIRECTORY_TRAVERSAL_CHECK
+    check_url_dir_traversal(ev_data);
 #endif
 
 #if ENABLE_PARAM_CHECKS
