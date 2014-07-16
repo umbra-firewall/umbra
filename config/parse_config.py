@@ -315,7 +315,7 @@ class CodeHeader:
 
 class Option:
     """Represents simple configuration option"""
-    def __init__(self, name, isTopLevel=False):
+    def __init__(self, name, isTopLevel=False, defaultValue=None):
         self.name = name
         self.value = None
         self.valueHasBeenSet = False
@@ -730,7 +730,6 @@ param_conf_optional = {
 params_option = ParamsOption('params', param_conf_required, param_conf_optional)
 page_conf_required = set()
 page_conf_optional = {
-        PosIntOption('max_request_payload_len'),
         params_option,
         BoolOption('restrict_params'),
         HTTPReqsOption('request_types', minLen=1,
@@ -751,13 +750,14 @@ enable_options = {
         BoolOption('enable_param_whitelist_check', isTopLevel=True)
 }
 global_conf_required = {
-        StringOption('https_certificate', isTopLevel=True),
-        StringOption('https_private_key', isTopLevel=True),
-        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True),
         PosIntOption('max_header_field_len', isTopLevel=True),
         PosIntOption('max_header_value_len', isTopLevel=True)
         }.union(enable_options)
-global_conf_optional = set()
+global_conf_optional = {
+    StringOption('https_certificate', isTopLevel=True),
+        StringOption('https_private_key', isTopLevel=True),
+        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True)
+}
 
 default_page_conf = DefaultPageConfOption(
     'default_page_config',
