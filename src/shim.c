@@ -85,11 +85,7 @@ int on_headers_complete_cb(http_parser *p) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->state = HEADERS_COMPLETE;
 
-    ev_data->page_match = find_matching_page((char *) ev_data->url->data,
-            ev_data->url->len);
-    log_dbg("page_match=\"%s\"\n", ev_data->page_match->name);
-
-    copy_default_params(ev_data->page_match, &ev_data->default_params);
+    do_header_complete_checks(ev_data);
 
     return 0;
 }
@@ -221,7 +217,7 @@ int create_and_bind(char *port) {
 
 /* Create listening socket */
 int create_and_connect(char *port) {
-    int sockfd, rv;
+    int sockfd, rv, rc = 0;
     struct addrinfo hints, *servinfo = NULL, *p = NULL;
 
     memset(&hints, 0, sizeof hints);
@@ -240,6 +236,7 @@ int create_and_connect(char *port) {
             perror("socket");
             continue;
         }
+        rc = sockfd;
 
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
@@ -255,13 +252,11 @@ int create_and_connect(char *port) {
         goto error;
     }
 
-    return sockfd;
-
 error:
     if (servinfo) {
         freeaddrinfo(servinfo);
     }
-    return -1;
+    return rc;
 }
 
 /* Free memory associated with event data */
@@ -329,7 +324,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->is_cancelled = false;
         ev_data->conn_info = conn_info;
         ev_data->page_match = NULL;
-        ev_data->have_done_after_header_checks = false;
 
         if ((ev_data->url = new_bytearray()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
@@ -712,7 +706,13 @@ void check_url_params(struct event_data *ev_data) {
 }
 
 /* Do checks that are possible after the header is received */
-void do_after_header_checks(struct event_data *ev_data) {
+void do_header_complete_checks(struct event_data *ev_data) {
+    ev_data->page_match = find_matching_page((char *) ev_data->url->data,
+            ev_data->url->len);
+    log_dbg("page_match=\"%s\"\n", ev_data->page_match->name);
+
+    copy_default_params(ev_data->page_match, &ev_data->default_params);
+
 #if ENABLE_REQUEST_TYPE_CHECK
     check_request_type(ev_data);
 #endif
@@ -762,13 +762,7 @@ int handle_client_event(struct epoll_event *ev) {
             break;
         }
 
-        if (!ev_data->have_done_after_header_checks
-                        && ev_data->state >= HEADERS_COMPLETE) {
-            do_after_header_checks(ev_data);
-            ev_data->have_done_after_header_checks = true;
-        }
-
-        //@Todo(Travis) check POST parameters
+        // @Todo(Travis) check POST parameters
 
         if (is_conn_cancelled(ev_data)) {
             if (send_error_page(ev_data->listen_fd)) {

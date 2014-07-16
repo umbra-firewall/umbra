@@ -72,7 +72,6 @@ struct event_data {
     event_t type : 8;
     conn_state_t state : 8;
     bool is_cancelled : 1;
-    bool have_done_after_header_checks : 1;
 };
 
 struct connection_info {
@@ -95,7 +94,7 @@ void init_error_page(char *error_page_file);
 void init_structures(char *error_page_file);
 void init_page_conf();
 struct connection_info *init_conn_info(int infd, int outfd);
-void do_after_header_checks(struct event_data *ev_data);
+void do_header_complete_checks(struct event_data *ev_data);
 void check_request_type(struct event_data *ev_data);
 int http_parser_method_to_shim(enum http_method method);
 void check_url_params(struct event_data *ev_data);
