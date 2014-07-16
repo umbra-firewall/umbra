@@ -226,6 +226,7 @@ int create_and_connect(char *port) {
 
     if ((rv = getaddrinfo("127.0.0.1", port, &hints, &servinfo)) != 0) {
         log_info("getaddrinfo: %s\n", gai_strerror(rv));
+        rc = -1;
         goto error;
     }
 
@@ -249,6 +250,7 @@ int create_and_connect(char *port) {
 
     if (p == NULL) {
         log_error("client: failed to connect\n");
+        rc = -1;
         goto error;
     }
 
