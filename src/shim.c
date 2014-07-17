@@ -1036,6 +1036,7 @@ int main(int argc, char *argv[]) {
 
     if (argc != 3 && argc != 4) {
         log_error("Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n", argv[0]);
+        log_error("Shim %s\n", SHIM_VERSION);
         exit(EXIT_FAILURE);
     }
 
