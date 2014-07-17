@@ -17,7 +17,7 @@
 #include "bytearray.h"
 #include "config.h"
 
-#define SHIM_VERSION "v0.4"
+#define SHIM_VERSION "v0.4.1"
 
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
