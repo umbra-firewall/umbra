@@ -125,9 +125,17 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length);
 int on_header_value_cb(http_parser *p, const char *at, size_t length);
 int on_body_cb(http_parser *p, const char *at, size_t length);
 
-#define SIMPLE_HTTP_RESPONSE \
+#define HTTP_RESPONSE_OK \
     "HTTP/1.0 201 OK\r\n" \
     "Content-type: text/html\r\n" \
+    "\r\n"
+
+#define HTTP_RESPONSE_FORBIDDEN \
+    "HTTP/1.0 403 Forbidden\r\n" \
+    "Content-type: text/html\r\n" \
+    "Cache-Control: no-cache, no-store, must-revalidate\r\n" \
+    "Pragma: no-cache\r\n" \
+    "Expires: 0\r\n" \
     "\r\n"
 
 #define DEFAULT_ERROR_PAGE_STR \

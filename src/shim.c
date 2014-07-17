@@ -495,7 +495,8 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
 
 /* Send a error page back on a socket */
 int send_error_page(int sock) {
-    if (sendall(sock, SIMPLE_HTTP_RESPONSE, sizeof(SIMPLE_HTTP_RESPONSE)) < 0) {
+    if (sendall(sock, HTTP_RESPONSE_FORBIDDEN, sizeof(HTTP_RESPONSE_FORBIDDEN))
+            < 0) {
         return -1;
     }
     if (sendall(sock, error_page_buf, error_page_len) < 0) {
