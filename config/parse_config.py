@@ -230,6 +230,7 @@ class CodeHeader:
 
         f.write('\n#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))\n')
         f.write('#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK)\n')
+        f.write('#define ENABLE_SESSION_TRACKING (ENABLE_PARAM_WHITELIST_CHECK)\n')
         f.write('#define WHITELIST_PARAM_LEN %d\n' % WhitelistOption.num_bytes)
 
         f.write('\n')
@@ -748,7 +749,8 @@ enable_options = {
         BoolOption('enable_request_type_check', isTopLevel=True),
         BoolOption('enable_param_len_check', isTopLevel=True),
         BoolOption('enable_param_whitelist_check', isTopLevel=True),
-        BoolOption('enable_url_directory_traversal_check', isTopLevel=True)
+        BoolOption('enable_url_directory_traversal_check', isTopLevel=True),
+        BoolOption('enable_csrf_protection', isTopLevel=True)
 }
 global_conf_required = {
         PosIntOption('max_header_field_len', isTopLevel=True),
