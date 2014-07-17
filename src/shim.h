@@ -22,17 +22,12 @@
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
 
-#define TRACE
-#ifdef TRACE
-#define log_trace(args...) fprintf(stdout, "[trace] " args); fflush(stdout)
-#else
-#define log_trace(msg, args...) ;
-#endif
-
 //#define DEBUG
 #ifdef DEBUG
+#define log_trace(args...) fprintf(stdout, "[trace] " args); fflush(stdout)
 #define log_dbg(args...) fprintf(stdout, "[ dbg ] " args); fflush(stdout)
 #else
+#define log_trace(msg, args...) ;
 #define log_dbg(msg, args...) ;
 #endif
 
