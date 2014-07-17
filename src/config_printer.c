@@ -130,6 +130,7 @@ int main(int argc, char **argv) {
     print_bool_macro(ENABLE_PARAM_CHECKS);
     print_bool_macro(ENABLE_PARAM_LEN_CHECK);
     print_bool_macro(ENABLE_PARAM_WHITELIST_CHECK);
+    print_bool_macro(ENABLE_URL_DIRECTORY_TRAVERSAL_CHECK);
 
     printf("\n** Global Page Defaults **\n");
     print_page_conf(&default_page_conf, 0);

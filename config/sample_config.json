@@ -1,37 +1,35 @@
-{
+ {
     "global_config": {
-        "https_certificate": "/etc/httpd/ssl/cert.crt",
-        "https_private_key": "/etc/httpd/ssl/key.pem",
-        "successful_login_pages":
-          ["/login.html", "/login-successful.html"]
+        "max_header_field_len": 30,
+        "max_header_value_len": 180,
+        "enable_header_field_check": true,
+        "enable_header_value_check": true,
+        "enable_request_type_check": true,
+        "enable_param_len_check": true,
+        "enable_param_whitelist_check": true,
+        "enable_url_directory_traversal_check": true
+    },
+
+    "default_page_config": {
+        "request_types": ["GET", "HEAD"],
+        "restrict_params": false,
+        "requires_login": false,
+
+        "max_param_len": 30,
+        "whitelist": "[a-zA-z0-9_]"
     },
     
     "page_config": {
         "/": {
-            "request_types": ["GET", "HEAD"],
-            "params_allowed": false,
-            "max_header_field_len": 80,
-            "max_header_len": 1024,
-            "max_post_payload_len": 4096
+            "restrict_params": true
         },
         
         "/index.html": {
-            "requires_login": false
-        },
-        
-        "/images": {
-            "requires_login": false
-        },
-
-        "/cgi-bin": {
-            "request_types": ["POST"],
-            "params_allowed": true,
-            "max_param_len": 25
+            "restrict_params": true
         },
         
         "/cgi-bin/login": {
-            "request_types": ["GET", "POST", "HEAD"],
-            "requires_login": false,
+            "request_types": ["POST"],
             "params": {
                 "user": {
                     "whitelist": "[a-z0-9_]"
@@ -43,14 +41,42 @@
             }
         },
         
-        "/cgi-bin/*-upload": {
+        "/cgi-bin/upload": {
+            "request_types": ["POST"],
             "params": {
                 "file": {
-                    "max_param_len": 1e6
+                    "max_param_len": 1e6,
+                    "whitelist": "[\\x00-\\xff]"
                 },
                 
                 "base64_data": {
+                    "max_param_len": 1e6,
                     "whitelist": "[A-Za-z0-9\\+/=]"
+                }
+            }
+        },
+        
+        "/cgi-bin/favorites": {
+            "request_types": ["POST"],
+            "params": {
+                "favorite_letters": {
+                    "max_param_len": 26,
+                    "whitelist": "[a-z]"
+                },
+                
+                "favorite_vowels": {
+                    "max_param_len": 6,
+                    "whitelist": "[aeiouy]"
+                },
+                
+                "favorite_number": {
+                    "max_param_len": 3,
+                    "whitelist": "[0-9]"
+                },
+                
+                "favorite_quote": {
+                    "max_param_len": 200,
+                    "whitelist": "[A-Za-z0-9, \"\\.!?]"
                 }
             }
         }

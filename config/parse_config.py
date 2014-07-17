@@ -4,12 +4,12 @@
 """Parses Umbra configuration"""
 
 
-import copy
 import json
 import os
 import re
 import struct
 import sys
+from copy import deepcopy
 
 
 default_page_conf = None
@@ -43,7 +43,7 @@ def c_str_repr(s):
     """Returns representation of string in C (without quotes)"""
     def byte_to_repr(c):
         x = ord(c)
-        if x in ['"', '\\', '\r', '\n']:
+        if c in ['"', '\\', '\r', '\n']:
             return '\\' + chr(x)
         elif ord(' ') <= x <= ord('^') or x == ord('_') or ord('a') <= x <= ord('~'):
             return chr(x)
@@ -317,7 +317,7 @@ class Option:
     """Represents simple configuration option"""
     def __init__(self, name, isTopLevel=False, defaultValue=None):
         self.name = name
-        self.value = None
+        self.value = defaultValue
         self.valueHasBeenSet = False
         self.isTopLevel = isTopLevel
 
@@ -456,9 +456,9 @@ class StringArrOption(Option):
     """Represents array of strings config option"""
 
     def __init__(self, name, minLen=0, allowedVals=None,
-                 isElementValid=None, isTopLevel=False):
-        Option.__init__(self, name)
-        self.value = []
+                 isElementValid=None, isTopLevel=False, defaultValue=[]):
+        Option.__init__(self, name, defaultValue=defaultValue)
+        self.value = defaultValue
         self.allowedVals = allowedVals
         self.minLen = minLen
         self.isElementValid = isElementValid
@@ -503,8 +503,8 @@ class MultiOption(Option):
         self.value = None
         self.jsonInput = None
         self.valueHasBeenSet = False
-        self.requiredConf = copy.deepcopy(requiredConf)
-        self.optionalConf = copy.deepcopy(optionalConf)
+        self.requiredConf = deepcopy(requiredConf)
+        self.optionalConf = deepcopy(optionalConf)
         self.requiredName2Conf = {x.name:x for x in self.requiredConf}
         self.optionalName2Conf = {x.name:x for x in self.optionalConf}
         for x in self.requiredConf.union(self.optionalConf):
@@ -601,7 +601,7 @@ class NamedOptionSet(MultiOption):
     def __init__(self, name, requiredConf, optionalConf, defaultConf=None, isTopLevel=False):
         MultiOption.__init__(self, name, requiredConf, optionalConf)
         self.suboptions = {}
-        self.orig_form = copy.deepcopy(self)
+        self.orig_form = deepcopy(self)
         self.isTopLevel = isTopLevel
         self.defaultConf = defaultConf
 
@@ -629,7 +629,7 @@ class NamedOptionSet(MultiOption):
                 self._updateWithDefaults(page_conf)
 
     def getOrigForm(self):
-        return copy.deepcopy(self.orig_form)
+        return deepcopy(self.orig_form)
 
     def get_elements(self):
         return [(self.getCType() + ' *', self.name),
@@ -665,7 +665,7 @@ class PageConfOption(NamedOptionSet):
         for (page, options) in self.suboptions.items():
             for opt in options.getAllOptions():
                 opt.addConfig(info)
-            nameOptCopy = copy.deepcopy(nameOpt)
+            nameOptCopy = deepcopy(nameOpt)
             nameOptCopy.setValue(page)
             options.requiredConf.add(nameOptCopy)
             inst = StructInst(options, 'page_conf')
@@ -705,7 +705,7 @@ class ParamsOption(NamedOptionSet):
         # Add structure instances
         struct_insts = []
         for (param, options) in self.suboptions.items():
-            nameOptCopy = copy.deepcopy(nameOpt)
+            nameOptCopy = deepcopy(nameOpt)
             nameOptCopy.setValue(param)
             options.requiredConf.add(nameOptCopy)
             inst = StructInst(options, 'params')
@@ -735,9 +735,9 @@ page_conf_optional = {
         HTTPReqsOption('request_types', minLen=1,
                        allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
         BoolOption('requires_login')
-        }.union(copy.deepcopy(param_conf_optional))
+        }.union(deepcopy(param_conf_optional))
 
-default_page_conf_required = {x for x in page_conf_required.union(page_conf_optional)
+default_page_conf_required = {deepcopy(x) for x in page_conf_required.union(page_conf_optional)
                               if x.name not in ['params']}
 default_page_conf_optional = set()
 
@@ -755,9 +755,9 @@ global_conf_required = {
         PosIntOption('max_header_value_len', isTopLevel=True)
         }.union(enable_options)
 global_conf_optional = {
-    StringOption('https_certificate', isTopLevel=True),
-        StringOption('https_private_key', isTopLevel=True),
-        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True)
+        StringOption('https_certificate', isTopLevel=True, defaultValue=""),
+        StringOption('https_private_key', isTopLevel=True, defaultValue=""),
+        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True, defaultValue=[])
 }
 
 default_page_conf = DefaultPageConfOption(
