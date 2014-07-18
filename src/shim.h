@@ -68,8 +68,10 @@ struct event_data {
     bytearray_t *body;
     struct page_conf *page_match;
     event_t type : 8;
-    conn_state_t state : 8;
     bool is_cancelled : 1;
+    bool msg_begun : 1;
+    bool headers_complete : 1;
+    bool msg_complete : 1;
 };
 
 struct connection_info {
@@ -85,8 +87,7 @@ void free_connection_info(struct connection_info *ci);
 int sendall(int sockfd, const void *buf, size_t len);
 
 void handle_event(int efd, struct epoll_event *ev, int sfd);
-int handle_client_event(struct epoll_event *ev);
-int handle_server_event(struct epoll_event *ev);
+int handle_client_server_event(struct epoll_event *ev);
 int handle_new_connection(int efd, struct epoll_event *ev, int sfd);
 void init_error_page(char *error_page_file);
 void init_structures(char *error_page_file);
@@ -121,9 +122,18 @@ int on_message_begin_cb(http_parser *p);
 int on_headers_complete_cb(http_parser *p);
 int on_message_complete_cb(http_parser *p);
 int on_url_cb(http_parser *p, const char *at, size_t length);
+int on_status_cb(http_parser *p, const char *at, size_t length);
 int on_header_field_cb(http_parser *p, const char *at, size_t length);
 int on_header_value_cb(http_parser *p, const char *at, size_t length);
 int on_body_cb(http_parser *p, const char *at, size_t length);
+
+
+/* Stringification macros */
+/* XSTR will expand a macro value into a string literal. */
+#define XSTR(a) STR(a)
+#define STR(a) #a
+
+#define CRLF "\r\n"
 
 #define HTTP_RESPONSE_OK \
     "HTTP/1.0 201 OK\r\n" \
@@ -149,5 +159,17 @@ int on_body_cb(http_parser *p, const char *at, size_t length);
     "Please contact your network administrator for more details." \
     "</body>" \
     "</html>"
+
+
+
+#define SHIM_SESSID_NAME "SHIM_SESSID"
+#define SHIM_SESSID_AGE_SEC 300
+
+#define SET_COOKIE_HEADER_FORMAT \
+    "Set-Cookie: " \
+        SHIM_SESSID_NAME "=%s; " \
+        "max-age=" XSTR(SHIM_SESSID_AGE_SEC) \
+        "path=/" \
+        CRLF
 
 #endif

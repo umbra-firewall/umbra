@@ -10,9 +10,10 @@ bool sigint_received = false;
 
 int num_conn_infos = 0;// DEBUG
 
-http_parser_settings parser_settings = {
+http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
     .on_url = on_url_cb,
+    .on_status = NULL,
 
 #if ENABLE_HEADER_FIELD_CHECK
     .on_header_field = on_header_field_cb,
@@ -26,6 +27,17 @@ http_parser_settings parser_settings = {
     .on_header_value = NULL,
 #endif
 
+    .on_headers_complete = on_headers_complete_cb,
+    .on_body = on_body_cb,
+    .on_message_complete = on_message_complete_cb
+};
+
+http_parser_settings server_parser_settings = {
+    .on_message_begin = on_message_begin_cb,
+    .on_url = NULL,
+    .on_status = on_status_cb,
+    .on_header_field = NULL,
+    .on_header_value = NULL,
     .on_headers_complete = on_headers_complete_cb,
     .on_body = on_body_cb,
     .on_message_complete = on_message_complete_cb
@@ -83,9 +95,11 @@ void copy_default_params(struct page_conf *page_conf, struct params *params) {
 int on_headers_complete_cb(http_parser *p) {
     log_trace("***HEADERS COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = HEADERS_COMPLETE;
+    ev_data->headers_complete = true;
 
-    do_header_complete_checks(ev_data);
+    if (ev_data->type == CLIENT_LISTENER) {
+        do_header_complete_checks(ev_data);
+    }
 
     return 0;
 }
@@ -93,11 +107,11 @@ int on_headers_complete_cb(http_parser *p) {
 int on_message_complete_cb(http_parser *p) {
     log_trace("***MESSAGE COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = MESSAGE_COMPLETE;
+    ev_data->msg_complete = true;
 
 #if ENABLE_PARAM_CHECKS
-    /* Check POST parameters */
-    if (p->method == HTTP_POST) { /* Use http_parser macro */
+    /* Check POST parameters, use http_parser macro */
+    if (ev_data->type == CLIENT_LISTENER && p->method == HTTP_POST) {
         check_buffer_params(ev_data->body, false, ev_data);
     }
 #endif
@@ -117,13 +131,17 @@ int update_bytearray(bytearray_t *b, const char *at, size_t length,
 
 int on_url_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
-    ev_data->state = URL_COMPLETE;
 
     if (update_bytearray(ev_data->url, at, length, ev_data) < 0) {
         return -1;
     }
     log_trace("Url: \"%.*s\"\n", (int) ev_data->url->len, ev_data->url->data);
 
+    return 0;
+}
+
+int on_status_cb(http_parser *p, const char *at, size_t length) {
+    log_trace("Status: %.*s\n", (int)length, at);
     return 0;
 }
 
@@ -347,8 +365,10 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->type = type;
         ev_data->listen_fd = listen_fd;
         ev_data->send_fd = send_fd;
-        ev_data->state = URL_COMPLETE;
         ev_data->is_cancelled = false;
+        ev_data->msg_begun = false;
+        ev_data->headers_complete = false;
+        ev_data->msg_complete = false;
         ev_data->conn_info = conn_info;
         ev_data->page_match = NULL;
 
@@ -815,7 +835,7 @@ void do_header_complete_checks(struct event_data *ev_data) {
 
 /* Handles incoming client requests.
  * Returns boolean indicated if connection is done */
-int handle_client_event(struct epoll_event *ev) {
+int handle_client_server_event(struct epoll_event *ev) {
     int s;
     int done = 0;
     size_t nparsed;
@@ -823,6 +843,14 @@ int handle_client_event(struct epoll_event *ev) {
     char buf[READ_BUF_SIZE];
 
     struct event_data *ev_data = (struct event_data *) ev->data.ptr;
+    event_t type = ev_data->type;
+
+    http_parser_settings *parser_settings;
+    if (type == CLIENT_LISTENER) {
+        parser_settings = &client_parser_settings;
+    } else { // type == SERVER_LISTENER
+        parser_settings = &server_parser_settings;
+    }
 
     while (!done) {
         count = read(ev_data->listen_fd, buf,
@@ -841,7 +869,8 @@ int handle_client_event(struct epoll_event *ev) {
             done = 1;
         }
 
-        nparsed = http_parser_execute(&ev_data->parser, &parser_settings, buf,
+        //@Todo(Travis) init parser differently
+        nparsed = http_parser_execute(&ev_data->parser, parser_settings, buf,
                 count);
 
         log_dbg("Parsed %ld / %ld bytes\n", nparsed, count);
@@ -853,9 +882,7 @@ int handle_client_event(struct epoll_event *ev) {
             break;
         }
 
-        // @Todo(Travis) check POST parameters
-
-        if (is_conn_cancelled(ev_data)) {
+        if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
             if (send_error_page(ev_data->listen_fd)) {
                 log_info("Failed to send error page.\n");
             }
@@ -871,42 +898,6 @@ int handle_client_event(struct epoll_event *ev) {
         s = sendall(ev_data->send_fd, buf, count);
         if (s < 0) {
             log_error("sendall failed\n");
-            done = 1;
-            break;
-        }
-    }
-
-    return done;
-}
-
-/* Handle a server response event */
-int handle_server_event(struct epoll_event *ev) {
-    int s;
-    int done = 0;
-
-    while (1) {
-        ssize_t count;
-        char buf[READ_BUF_SIZE];
-
-        count = read(((struct event_data *) ev->data.ptr)->listen_fd, buf,
-                READ_BUF_SIZE);
-        if (count == -1) {
-            /* If errno == EAGAIN, that means we have read all
-             data. So go back to the main loop. */
-            if (errno != EAGAIN) {
-                perror("read");
-                done = 1;
-            }
-            break;
-        } else if (count == 0) {
-            /* End of file. The remote has closed the
-             connection. */
-            done = 1;
-            break;
-        }
-
-        s = sendall(((struct event_data *) ev->data.ptr)->send_fd, buf, count);
-        if (s < 0) {
             done = 1;
             break;
         }
@@ -945,10 +936,9 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
          and won't get a notification again for the same
          data. */
 
-        if (ev_data->type == CLIENT_LISTENER) {
-            done = handle_client_event(ev);
-        } else if (ev_data->type == SERVER_LISTENER) {
-            done = handle_server_event(ev);
+        if (ev_data->type == CLIENT_LISTENER
+                || ev_data->type == SERVER_LISTENER) {
+            done = handle_client_server_event(ev);
         } else {
             log_error("Invalid event_data type \"%d\"\n", ev_data->type);
             done = 1;
