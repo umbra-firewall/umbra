@@ -6,7 +6,7 @@
 #define TAB_SIZE 4
 
 #define print_str_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro))
-#define print_int_macro(macro) printf("%s = \"%d\"\n", (#macro), (macro))
+#define print_int_macro(macro) printf("%s = %d\n", (#macro), (macro))
 #define print_bool_macro(macro) printf("%s = %s\n", (#macro), (macro) ? "true" : "false")
 
 #define print_str_arr(var) { printf("%s = {\n", #var); \
@@ -123,6 +123,7 @@ int main(int argc, char **argv) {
     print_str_arr(successful_login_pages);
     print_int_macro(MAX_HEADER_VALUE_LEN);
     print_int_macro(MAX_NUM_SESSIONS);
+    print_int_macro(SESSION_LIFE_SECONDS);
 
     printf("\n** Enable Config **\n");
     print_bool_macro(ENABLE_HEADER_FIELD_LEN_CHECK);

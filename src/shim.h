@@ -94,14 +94,13 @@ typedef enum {
 
 #define SHIM_SESSID_NAME "SHIM_SESSID"
 #define SHIM_SESSID_NAME_STRLEN (sizeof(SHIM_SESSID_NAME) - 1)
-#define SHIM_SESSID_AGE_SEC 300
 #define SHIM_SESSID_RAND_BYTES 10
 #define SHIM_SESSID_LEN (2 * SHIM_SESSID_RAND_BYTES)
 
 #define SET_COOKIE_HEADER_FORMAT \
     "Set-Cookie: " \
         SHIM_SESSID_NAME "=%s; " \
-        "max-age=" XSTR(SHIM_SESSID_AGE_SEC) "; " \
+        "max-age=" XSTR(SESSION_LIFE_SECONDS) "; " \
         "path=/" \
         CRLF
 
@@ -200,6 +199,9 @@ bool is_session_entry_clear(struct session *sess);
 void clear_session(struct session *sess);
 int fill_rand_bytes(char *buf, size_t len);
 struct session *search_session(char *sess_id);
+void expire_sessions();
+bool is_session_expired(struct session *s);
+int get_num_active_sessions();
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

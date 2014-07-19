@@ -997,6 +997,36 @@ struct session *search_session(char *sess_id) {
     return NULL;
 }
 
+/* Returns whether a session is expired */
+bool is_session_expired(struct session *s) {
+    return current_time >= s->expires_at;
+}
+
+/* Clears all entries that have expired */
+void expire_sessions() {
+    struct session *sess;
+    int i;
+
+    for (i = 0; i < MAX_NUM_SESSIONS; i++) {
+        sess = &current_sessions[i];
+        if (!is_session_entry_clear(sess) && is_session_expired(sess)) {
+            log_trace("Expiring session \"%s\"\n", sess->session_id);
+            clear_session(sess);
+        }
+    }
+}
+
+int get_num_active_sessions() {
+    int num_sessions = 0, i;
+
+    for (i = 0; i < MAX_NUM_SESSIONS; i++) {
+        if (!is_session_entry_clear(&current_sessions[i])) {
+            num_sessions++;
+        }
+    }
+    return num_sessions;
+}
+
 /* Create a new session and returns the session structure. Returns NULL on
  * error. */
 struct session *new_session() {
@@ -1045,7 +1075,7 @@ struct session *get_conn_session(struct connection_info *conn_info) {
     return conn_info->session;
 }
 
-#endif /* ENABLE_SESSION_TRACKING
+#endif /* ENABLE_SESSION_TRACKING */
 
 
 /* Handles incoming client requests.
@@ -1414,15 +1444,25 @@ int main(int argc, char *argv[]) {
         /* Block indefinitely */
         n = epoll_wait(efd, events, MAXEVENTS, -1);
 
-        /* Set time for tracking session expiration */
+        if (sigint_received) {
+            break;
+        }
+
 #if ENABLE_SESSION_TRACKING
+        /* Set time for tracking session expiration */
         time(&current_time);
-        next_session_expiration_time = current_time + SHIM_SESSID_AGE_SEC;
+        next_session_expiration_time = current_time + SESSION_LIFE_SECONDS;
+
+        expire_sessions();
 #endif
 
         for (i = 0; i < n; i++) {
             handle_event(efd, &events[i], sfd);
         }
+
+#if ENABLE_SESSION_TRACKING
+        log_trace("Now tracking %d active sessions\n", get_num_active_sessions());
+#endif
     }
 
     close(efd);
