@@ -7,7 +7,7 @@
 
 #define print_str_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro))
 #define print_int_macro(macro) printf("%s = \"%d\"\n", (#macro), (macro))
-#define print_bool_macro(macro) printf("%s = \"%s\"\n", (#macro), (macro) ? "true" : "false")
+#define print_bool_macro(macro) printf("%s = %s\n", (#macro), (macro) ? "true" : "false")
 
 #define print_str_arr(var) { printf("%s = {\n", #var); \
     int i; \
@@ -124,7 +124,9 @@ int main(int argc, char **argv) {
     print_int_macro(MAX_HEADER_VALUE_LEN);
 
     printf("\n** Enable Config **\n");
+    print_bool_macro(ENABLE_HEADER_FIELD_LEN_CHECK);
     print_bool_macro(ENABLE_HEADER_FIELD_CHECK);
+    print_bool_macro(ENABLE_HEADER_VALUE_LEN_CHECK);
     print_bool_macro(ENABLE_HEADER_VALUE_CHECK);
     print_bool_macro(ENABLE_REQUEST_TYPE_CHECK);
     print_bool_macro(ENABLE_PARAM_CHECKS);

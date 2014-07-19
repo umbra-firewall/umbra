@@ -98,7 +98,7 @@ int on_headers_complete_cb(http_parser *p) {
     ev_data->headers_complete = true;
 
     if (ev_data->type == CLIENT_LISTENER) {
-        do_header_complete_checks(ev_data);
+        do_client_header_complete_checks(ev_data);
     }
 
     return 0;
@@ -145,35 +145,70 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
     return 0;
 }
 
+
 #if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header field: %.*s\n", (int)length, at);
+    struct event_data *ev_data = (struct event_data *) p->data;
+
+#if ENABLE_HEADER_FIELD_LEN_CHECK
     if (length > MAX_HEADER_FIELD_LEN) {
         log_info("Blocked request because header field length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_FIELD_LEN);
-        struct event_data *ev_data = (struct event_data *) p->data;
         cancel_connection(ev_data);
         return -1;
     }
+#endif
+
+#if ENABLE_SESSION_TRACKING
+    /* Look for Cookie header field */
+    if (ev_data->type == CLIENT_LISTENER ) {
+        if (COOKIE_HEADER_FIELD_STRLEN == length
+                && strncmp(COOKIE_HEADER_FIELD_NAME, at,
+                COOKIE_HEADER_FIELD_STRLEN) == 0) {
+            log_dbg("Found Cookie header\n");
+            ev_data->next_header_value_is_cookie = true;
+        } else if (ev_data->next_header_value_is_cookie) {
+            /* Hit header field after cookie, so don't expect next header value
+             * to be the Cookie */
+            ev_data->next_header_value_is_cookie = false;
+        }
+    }
+#endif
+
     return 0;
 }
 #endif
 
+
 #if ENABLE_HEADER_VALUE_CHECK
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header value: %.*s\n", (int)length, at);
+    struct event_data *ev_data = (struct event_data *) p->data;
+#if ENABLE_HEADER_VALUE_LEN_CHECK
     if (length > MAX_HEADER_VALUE_LEN) {
         log_info("Blocked request because header value length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_VALUE_LEN);
-        struct event_data *ev_data = (struct event_data *) p->data;
         cancel_connection(ev_data);
         return -1;
     }
+#endif
+
+#if ENABLE_SESSION_TRACKING
+    /* Store header value */
+    if (ev_data->next_header_value_is_cookie) {
+        if (update_bytearray(ev_data->cookie, at, length, ev_data) < 0) {
+            return -1;
+        }
+    }
+#endif
+
     return 0;
 }
 #endif
+
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_PARAM_CHECKS
@@ -309,6 +344,9 @@ void free_event_data(struct event_data *ev) {
     if (ev != NULL) {
         bytearray_free(ev->url);
         bytearray_free(ev->body);
+#if ENABLE_SESSION_TRACKING
+        bytearray_free(ev->cookie);
+#endif
         free(ev);
     }
 }
@@ -365,10 +403,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->type = type;
         ev_data->listen_fd = listen_fd;
         ev_data->send_fd = send_fd;
-        ev_data->is_cancelled = false;
-        ev_data->msg_begun = false;
-        ev_data->headers_complete = false;
-        ev_data->msg_complete = false;
         ev_data->conn_info = conn_info;
         ev_data->page_match = NULL;
 
@@ -382,6 +416,13 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
             goto error;
         }
 
+#if ENABLE_SESSION_TRACKING
+        if ((ev_data->cookie = new_bytearray()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            goto error;
+        }
+#endif
+
         http_parser_init(&ev_data->parser, parser_type);
         ev_data->parser.data = ev_data;
     }
@@ -389,8 +430,11 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     return ev_data;
 
 error:
-    free(ev_data->url);
-    free(ev_data->body);
+    bytearray_free(ev_data->url);
+    bytearray_free(ev_data->body);
+#if ENABLE_SESSION_TRACKING
+    bytearray_free(ev_data->cookie);
+#endif
     free(ev_data);
     return NULL;
 }
@@ -811,8 +855,51 @@ void check_url_dir_traversal(struct event_data *ev_data) {
 }
 #endif
 
+/* Returns value of session id given a NUL terminated string with the Cookie
+ * header value. */
+char *extract_sessid_cookie_value(char *cookie_header_value) {
+    char *tok = strtok(cookie_header_value, ";");
+
+    /* Examine each query parameter */
+    while (tok  != NULL) {
+        tok = strstr(tok, SHIM_SESSID_NAME "=");
+        if (tok) {
+            return tok + SHIM_SESSID_NAME_STRLEN + 1;
+        }
+        tok = strtok(NULL, ";");
+    }
+
+    return NULL;
+}
+
+/* Find session associated with cookie */
+void find_session(struct event_data *ev_data) {
+    log_dbg("Cookie: \"%.*s\"\n", (int) ev_data->cookie->len,
+            ev_data->cookie->data);
+    /* NUL terminate bytearray to that C string functions can be used */
+    if (bytearray_append(ev_data->cookie, "\0", 1) < 0) {
+        log_error("bytearray_append failed\n");
+        cancel_connection(ev_data);
+    }
+
+    char *sess_id = extract_sessid_cookie_value(ev_data->cookie->data);
+    log_dbg("SESSION_ID: \"%s\"\n", sess_id);
+
+    if (sess_id == NULL) {
+        log_dbg("SESSION_ID not found in HTTP request\n");
+        return;
+    }
+
+    size_t sess_id_len = strlen(sess_id);
+    if (sess_id_len != SHIM_TOKEN_LEN) {
+        log_warn("Found SESSION_ID with length %ld instead of expected %ld\n",
+                sess_id_len, SHIM_TOKEN_LEN);
+        cancel_connection(ev_data);
+    }
+}
+
 /* Do checks that are possible after the header is received */
-void do_header_complete_checks(struct event_data *ev_data) {
+void do_client_header_complete_checks(struct event_data *ev_data) {
     ev_data->page_match = find_matching_page((char *) ev_data->url->data,
             ev_data->url->len);
     log_dbg("page_match=\"%s\"\n", ev_data->page_match->name);
@@ -830,6 +917,10 @@ void do_header_complete_checks(struct event_data *ev_data) {
 #if ENABLE_PARAM_CHECKS
     /* Check URL parameters */
     check_buffer_params(ev_data->url, true, ev_data);
+#endif
+
+#if ENABLE_SESSION_TRACKING
+    find_session(ev_data);
 #endif
 }
 
