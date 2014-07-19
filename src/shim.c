@@ -836,14 +836,28 @@ void do_header_complete_checks(struct event_data *ev_data) {
 /* Handles incoming client requests.
  * Returns boolean indicated if connection is done */
 int handle_client_server_event(struct epoll_event *ev) {
-    int s;
     int done = 0;
-    size_t nparsed;
     ssize_t count;
     char buf[READ_BUF_SIZE];
 
     struct event_data *ev_data = (struct event_data *) ev->data.ptr;
     event_t type = ev_data->type;
+
+#if ENABLE_SESSION_TRACKING
+    /* Cache first response to find where headers begin */
+    char *newline_loc;
+    bytearray_t *first_response_line = NULL;
+    if (type == SERVER_LISTENER) {
+        if ((first_response_line = new_bytearray()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            cancel_connection(ev_data);
+            return 1;
+        }
+    }
+#endif
+
+    log_trace("Handling event type %s\n",
+            type == CLIENT_LISTENER ? "REQUEST" : "RESPONSE");
 
     http_parser_settings *parser_settings;
     if (type == CLIENT_LISTENER) {
@@ -869,41 +883,115 @@ int handle_client_server_event(struct epoll_event *ev) {
             done = 1;
         }
 
-        //@Todo(Travis) init parser differently
-        nparsed = http_parser_execute(&ev_data->parser, parser_settings, buf,
-                count);
-
-        log_dbg("Parsed %ld / %ld bytes\n", nparsed, count);
-
-        if (ev_data->parser.upgrade) {
-            /* Wants to upgrade connection */
-            log_warn("HTTP upgrade not supported\n");
-            done = 1;
-            break;
-        }
-
-        if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
-            if (send_error_page(ev_data->listen_fd)) {
-                log_info("Failed to send error page.\n");
+#if ENABLE_SESSION_TRACKING
+        /* Add session Set-Cookie header */
+        if (type == SERVER_LISTENER && first_response_line) {
+            log_dbg("Caching first line of response\n");
+            bytearray_append(first_response_line, buf, count);
+            newline_loc = memchr(buf, '\n', count);
+            if (newline_loc) { // has '\n'
+                log_dbg("Found newline\n");
+                char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
+                char *token = "AAAAAAAAAAAAAAAAAAAA";
+                // @Todo(Travis) create token
+                // @Todo(Travis) create "user db" mapping sess_ids --> connection
+                int insert_header_len = snprintf(insert_header, sizeof(insert_header),
+                        SET_COOKIE_HEADER_FORMAT, token);
+                size_t insert_offset = first_response_line->len - count
+                        + (newline_loc - buf + 1);
+                done = do_http_parse_send(first_response_line->data,
+                        first_response_line->len, ev_data, parser_settings,
+                        insert_header, insert_header_len, insert_offset);
+                bytearray_free(first_response_line);
+                first_response_line = NULL;
+                continue;
+            } else if (first_response_line->len
+                    > MAX_HTTP_RESPONSE_FIRST_LINE_LEN) {
+                log_warn("Newline not found after %d bytes into response\n",
+                        MAX_HTTP_RESPONSE_FIRST_LINE_LEN);
+                cancel_connection(ev_data);
+                done = 1;
+                continue;
+            } else {
+                log_dbg("No newline found yet\n");
+                continue;
             }
-            close(ev_data->listen_fd);
-            close(ev_data->send_fd);
-            ev_data->listen_fd = 0;
-            ev_data->send_fd = 0;
-            log_info("Closed_connection\n");
-            done = 1;
-            break;
         }
+#endif
+        log_dbg("Sending data normally\n");
+        done |= do_http_parse_send(buf, count, ev_data, parser_settings, NULL, 0,
+                0);
+    }
 
-        s = sendall(ev_data->send_fd, buf, count);
+#if ENABLE_SESSION_TRACKING
+    if (first_response_line) {
+        bytearray_free(first_response_line);
+    }
+#endif
+
+    return done;
+}
+
+/* Parse http buffer and run checks. If insert_header is not NULL, it is sent
+ * at insert_offset. */
+int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
+        http_parser_settings *parser_settings, char *insert_header,
+        size_t insert_header_len, size_t insert_offset) {
+    int s;
+    event_t type = ev_data->type;
+    size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
+            buf, len);
+
+    log_dbg("Parsed %ld / %ld bytes\n", nparsed, len);
+
+    if (ev_data->parser.upgrade) {
+        /* Wants to upgrade connection */
+        log_warn("HTTP upgrade not supported\n");
+        return 1;
+    }
+
+    if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
+        if (send_error_page(ev_data->listen_fd)) {
+            log_info("Failed to send error page.\n");
+        }
+        close(ev_data->listen_fd);
+        close(ev_data->send_fd);
+        ev_data->listen_fd = 0;
+        ev_data->send_fd = 0;
+        log_info("Closed_connection\n");
+        return 1;
+    }
+
+    if (insert_header) { /* Insert header */
+        /* Send first line */
+        s = sendall(ev_data->send_fd, buf, insert_offset);
         if (s < 0) {
             log_error("sendall failed\n");
-            done = 1;
-            break;
+            return 1;
+        }
+
+        /* Send insert header */
+        s = sendall(ev_data->send_fd, insert_header, insert_header_len);
+        if (s < 0) {
+            log_error("sendall failed\n");
+            return 1;
+        }
+
+        /* Send rest of buf */
+        s = sendall(ev_data->send_fd, buf + insert_offset, len - insert_offset);
+        if (s < 0) {
+            log_error("sendall failed\n");
+            return 1;
+        }
+    } else { /* Send normal buf */
+        s = sendall(ev_data->send_fd, buf, len);
+        if (s < 0) {
+            log_error("sendall failed\n");
+            return 1;
         }
     }
 
-    return done;
+    return 0;
 }
 
 /* Handle epoll event */

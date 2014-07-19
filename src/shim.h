@@ -116,6 +116,9 @@ int check_char_whitelist(const char *whitelist, const char c,
 int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
+int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
+        http_parser_settings *parser_settings, char *insert_header,
+        size_t insert_header_len, size_t insert_offset);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);
@@ -164,12 +167,18 @@ int on_body_cb(http_parser *p, const char *at, size_t length);
 
 #define SHIM_SESSID_NAME "SHIM_SESSID"
 #define SHIM_SESSID_AGE_SEC 300
+#define SHIM_TOKEN_LEN 20
 
 #define SET_COOKIE_HEADER_FORMAT \
     "Set-Cookie: " \
         SHIM_SESSID_NAME "=%s; " \
-        "max-age=" XSTR(SHIM_SESSID_AGE_SEC) \
+        "max-age=" XSTR(SHIM_SESSID_AGE_SEC) "; " \
         "path=/" \
         CRLF
+
+#define ESTIMATED_SET_COOKIE_HEADER_LEN \
+    (sizeof(SET_COOKIE_HEADER_FORMAT) + SHIM_TOKEN_LEN)
+
+#define MAX_HTTP_RESPONSE_FIRST_LINE_LEN 2048
 
 #endif

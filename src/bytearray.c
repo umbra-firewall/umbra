@@ -22,7 +22,7 @@ bytearray_t* new_bytearray() {
 void bytearray_free(bytearray_t *ba) {
     if (ba == NULL) {
         fprintf(stderr, "Tried to free null bytearray\n");
-        abort();
+        return;
     }
 
     free(ba->data);
@@ -34,7 +34,7 @@ int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
 
     if (ba == NULL) {
         fprintf(stderr, "Tried to append null bytearray\n");
-        abort();
+        return -1;
     }
 
     size_t new_len = ba->len + len;
@@ -54,14 +54,14 @@ int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
     return 0;
 }
 
-static void bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back) {
+static int bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back) {
     if (ba == NULL) {
         fprintf(stderr, "Tried to truncate null bytearray\n");
-        abort();
+        return -1;
     }
     if (trunc_amt > ba->len) {
         fprintf(stderr, "Tried to truncate bytearray by more than size\n");
-        abort();
+        return -1;
     }
 
     size_t new_len = ba->len - trunc_amt;
@@ -69,12 +69,13 @@ static void bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back)
         memmove(ba->data, ba->data + trunc_amt, new_len);
     }
     ba->len = new_len;
+    return 0;
 }
 
-void bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
-    bytearray_truncate(ba, trunc_amt, 0);
+int bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
+    return bytearray_truncate(ba, trunc_amt, 0);
 }
 
-void bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
-    bytearray_truncate(ba, trunc_amt, 1);
+int bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
+    return bytearray_truncate(ba, trunc_amt, 1);
 }
