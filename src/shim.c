@@ -887,7 +887,12 @@ int handle_client_server_event(struct epoll_event *ev) {
         /* Add session Set-Cookie header */
         if (type == SERVER_LISTENER && first_response_line) {
             log_dbg("Caching first line of response\n");
-            bytearray_append(first_response_line, buf, count);
+            if (bytearray_append(first_response_line, buf, count) < 0) {
+                log_error("bytearray_append failed\n");
+                cancel_connection(ev_data);
+                done = 1;
+                continue;
+            }
             newline_loc = memchr(buf, '\n', count);
             if (newline_loc) { // has '\n'
                 log_dbg("Found newline\n");
@@ -899,7 +904,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                         SET_COOKIE_HEADER_FORMAT, token);
                 size_t insert_offset = first_response_line->len - count
                         + (newline_loc - buf + 1);
-                done = do_http_parse_send(first_response_line->data,
+                done |= do_http_parse_send(first_response_line->data,
                         first_response_line->len, ev_data, parser_settings,
                         insert_header, insert_header_len, insert_offset);
                 bytearray_free(first_response_line);
