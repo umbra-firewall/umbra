@@ -13,6 +13,7 @@
 #include <sys/epoll.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <time.h>
 #include "http_parser.h"
 #include "bytearray.h"
 #include "config.h"
@@ -91,12 +92,11 @@ typedef enum {
     "</body>" \
     "</html>"
 
-
-
 #define SHIM_SESSID_NAME "SHIM_SESSID"
 #define SHIM_SESSID_NAME_STRLEN (sizeof(SHIM_SESSID_NAME) - 1)
 #define SHIM_SESSID_AGE_SEC 300
-#define SHIM_TOKEN_LEN 20
+#define SHIM_SESSID_RAND_BYTES 10
+#define SHIM_SESSID_LEN (2 * SHIM_SESSID_RAND_BYTES)
 
 #define SET_COOKIE_HEADER_FORMAT \
     "Set-Cookie: " \
@@ -106,7 +106,7 @@ typedef enum {
         CRLF
 
 #define ESTIMATED_SET_COOKIE_HEADER_LEN \
-    (sizeof(SET_COOKIE_HEADER_FORMAT) + SHIM_TOKEN_LEN)
+    (sizeof(SET_COOKIE_HEADER_FORMAT) + SHIM_SESSID_LEN)
 
 #define MAX_HTTP_RESPONSE_FIRST_LINE_LEN 2048
 
@@ -138,9 +138,15 @@ struct event_data {
     bool next_header_value_is_cookie : 1;
 };
 
+struct session {
+    char session_id[SHIM_SESSID_LEN + 1];
+    time_t expires_at;
+};
+
 struct connection_info {
     struct event_data *client_ev_data;
     struct event_data *server_ev_data;
+    struct session *session;
 };
 
 
@@ -186,8 +192,14 @@ void check_url_dir_traversal(struct event_data *ev_data);
 int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         http_parser_settings *parser_settings, char *insert_header,
         size_t insert_header_len, size_t insert_offset);
-void find_session(struct event_data *ev_data);
+void find_session_from_cookie(struct event_data *ev_data);
 char *extract_sessid_cookie_value(char *cookie_header_value);
+struct session *get_conn_session(struct connection_info *conn_info);
+struct session *new_session();
+bool is_session_entry_clear(struct session *sess);
+void clear_session(struct session *sess);
+int fill_rand_bytes(char *buf, size_t len);
+struct session *search_session(char *sess_id);
 
 /* HTTP parser callbacks */
 int on_message_begin_cb(http_parser *p);

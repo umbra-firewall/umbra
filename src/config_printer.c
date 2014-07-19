@@ -122,6 +122,7 @@ int main(int argc, char **argv) {
     print_int_macro(MAX_HEADER_FIELD_LEN);
     print_str_arr(successful_login_pages);
     print_int_macro(MAX_HEADER_VALUE_LEN);
+    print_int_macro(MAX_NUM_SESSIONS);
 
     printf("\n** Enable Config **\n");
     print_bool_macro(ENABLE_HEADER_FIELD_LEN_CHECK);

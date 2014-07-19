@@ -761,7 +761,8 @@ global_conf_required = {
 global_conf_optional = {
         StringOption('https_certificate', isTopLevel=True, defaultValue=""),
         StringOption('https_private_key', isTopLevel=True, defaultValue=""),
-        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True, defaultValue=[])
+        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True, defaultValue=[]),
+        PosIntOption('max_num_sessions', isTopLevel=True, defaultValue=20)
 }
 
 default_page_conf = DefaultPageConfOption(

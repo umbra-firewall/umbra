@@ -43,6 +43,14 @@ http_parser_settings server_parser_settings = {
     .on_message_complete = on_message_complete_cb
 };
 
+
+#if ENABLE_SESSION_TRACKING
+struct session current_sessions[MAX_NUM_SESSIONS];
+
+time_t current_time, next_session_expiration_time;
+#endif
+
+
 /* Set connection to cancelled state */
 void cancel_connection(struct event_data *ev_data) {
     ev_data->is_cancelled = true;
@@ -167,7 +175,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
         if (COOKIE_HEADER_FIELD_STRLEN == length
                 && strncmp(COOKIE_HEADER_FIELD_NAME, at,
                 COOKIE_HEADER_FIELD_STRLEN) == 0) {
-            log_dbg("Found Cookie header\n");
+            log_trace("Found Cookie header\n");
             ev_data->next_header_value_is_cookie = true;
         } else if (ev_data->next_header_value_is_cookie) {
             /* Hit header field after cookie, so don't expect next header value
@@ -444,7 +452,7 @@ struct connection_info *init_conn_info(int infd, int outfd) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
     num_conn_infos++;
-    log_dbg("init_conn_info() (%d total)\n", num_conn_infos);
+    log_trace("init_conn_info() (%d total)\n", num_conn_infos);
 
     conn_info = calloc(1, sizeof(struct connection_info));
     if (conn_info == NULL) {
@@ -503,8 +511,8 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
                 sizeof(sbuf),
                 NI_NUMERICHOST | NI_NUMERICSERV);
         if (s == 0) {
-            log_dbg(
-                    "Accepted connection on descriptor %d " "(host=%s, port=%s)\n",
+            log_trace("Accepted connection on descriptor %d "
+                    "(host=%s, port=%s)\n",
                     infd, hbuf, sbuf);
         }
 
@@ -763,7 +771,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
             param = &ev_data->default_params;
         }
     }
-    log_dbg("Using param \"%s\"\n", param->name ? param->name : "default");
+    log_trace("Using param \"%s\"\n", param->name ? param->name : "default");
 
 #if ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK
     check_arg_len_whitelist(param, value, value_len, ev_data);
@@ -864,7 +872,11 @@ char *extract_sessid_cookie_value(char *cookie_header_value) {
     while (tok  != NULL) {
         tok = strstr(tok, SHIM_SESSID_NAME "=");
         if (tok) {
-            return tok + SHIM_SESSID_NAME_STRLEN + 1;
+            tok += SHIM_SESSID_NAME_STRLEN + 1;
+            if (*tok == '"') {
+                tok++;
+            }
+            return tok;
         }
         tok = strtok(NULL, ";");
     }
@@ -872,10 +884,13 @@ char *extract_sessid_cookie_value(char *cookie_header_value) {
     return NULL;
 }
 
+
 /* Find session associated with cookie */
-void find_session(struct event_data *ev_data) {
+#if ENABLE_SESSION_TRACKING
+void find_session_from_cookie(struct event_data *ev_data) {
     log_dbg("Cookie: \"%.*s\"\n", (int) ev_data->cookie->len,
             ev_data->cookie->data);
+
     /* NUL terminate bytearray to that C string functions can be used */
     if (bytearray_append(ev_data->cookie, "\0", 1) < 0) {
         log_error("bytearray_append failed\n");
@@ -883,26 +898,38 @@ void find_session(struct event_data *ev_data) {
     }
 
     char *sess_id = extract_sessid_cookie_value(ev_data->cookie->data);
-    log_dbg("SESSION_ID: \"%s\"\n", sess_id);
+    log_trace("SESSION_ID: \"%s\"\n", sess_id);
 
     if (sess_id == NULL) {
-        log_dbg("SESSION_ID not found in HTTP request\n");
+        log_trace("SESSION_ID not found in HTTP request\n");
         return;
     }
 
     size_t sess_id_len = strlen(sess_id);
-    if (sess_id_len != SHIM_TOKEN_LEN) {
-        log_warn("Found SESSION_ID with length %ld instead of expected %ld\n",
-                sess_id_len, SHIM_TOKEN_LEN);
+    if (sess_id_len != SHIM_SESSID_LEN) {
+        log_warn("Found SESSION_ID with length %ld instead of expected %d\n",
+                sess_id_len, SHIM_SESSID_LEN);
         cancel_connection(ev_data);
     }
+
+    ev_data->conn_info->session = search_session(sess_id);
+
+#ifdef DEBUG
+    if (ev_data->conn_info->session) {
+        log_trace("Found existing session \"%s\"\n",
+                ev_data->conn_info->session->session_id);
+    } else {
+        log_trace("Could not find existing existing session\n");
+    }
+#endif
 }
+#endif
 
 /* Do checks that are possible after the header is received */
 void do_client_header_complete_checks(struct event_data *ev_data) {
     ev_data->page_match = find_matching_page((char *) ev_data->url->data,
             ev_data->url->len);
-    log_dbg("page_match=\"%s\"\n", ev_data->page_match->name);
+    log_trace("page_match=\"%s\"\n", ev_data->page_match->name);
 
     copy_default_params(ev_data->page_match, &ev_data->default_params);
 
@@ -920,9 +947,106 @@ void do_client_header_complete_checks(struct event_data *ev_data) {
 #endif
 
 #if ENABLE_SESSION_TRACKING
-    find_session(ev_data);
+    find_session_from_cookie(ev_data);
 #endif
 }
+
+
+/* Session tracking functions */
+#if ENABLE_SESSION_TRACKING
+
+/* Clear session (clears entry in array) */
+void clear_session(struct session *sess) {
+    memset(sess, 0, sizeof(struct session));
+}
+
+/* Returns whether session entry is ununsed */
+bool is_session_entry_clear(struct session *sess) {
+    return sess->session_id[0] == 0;
+}
+
+/* Fills buffer with random bytes from /dev/urandom. Returns 0 on success and
+ * -1 on failure. */
+int fill_rand_bytes(char *buf, size_t len) {
+    int rc = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return -1;
+    }
+    if (read(fd, buf, len) != len) {
+        log_error("Did not read enough bytes from /dev/urandom\n");
+        rc = -1;
+    }
+    if (close(fd) < 0) {
+        perror("close");
+        rc = -1;
+    }
+    return rc;
+}
+
+/* Tries to find session with given sess_id. Returns NULL if none is found. */
+struct session *search_session(char *sess_id) {
+    int i;
+    for (i = 0; i < MAX_NUM_SESSIONS; i++) {
+        if (strcmp(sess_id, current_sessions[i].session_id) == 0) {
+            return &current_sessions[i];
+        }
+    }
+
+    return NULL;
+}
+
+/* Create a new session and returns the session structure. Returns NULL on
+ * error. */
+struct session *new_session() {
+    log_trace("Creating new session\n");
+
+    struct session *sess = NULL;
+    int i;
+
+    /* Find first free entry */
+    for (i = 0; i < MAX_NUM_SESSIONS; i++) {
+        if (is_session_entry_clear(&current_sessions[i])) {
+            sess = &current_sessions[i];
+            break;
+        }
+    }
+
+    /* No free entry found */
+    if (sess == NULL) {
+        return NULL;
+    }
+
+    sess->expires_at = next_session_expiration_time;
+    char rand_bytes[SHIM_SESSID_RAND_BYTES];
+    if (fill_rand_bytes(rand_bytes, SHIM_SESSID_RAND_BYTES) < 0) {
+        goto error;
+    }
+
+    for (i = 0; i < SHIM_SESSID_RAND_BYTES; i++) {
+        sprintf(sess->session_id + 2 * i, "%02hhX", rand_bytes[i]);
+    }
+
+    return sess;
+
+error:
+    memset(sess, 0, sizeof(struct session));
+    return NULL;
+}
+
+/* Returns session structure associated with connection. If one does not exists,
+ * then a new one is created. NULL is returned if the maximum number of sessions
+ * exist already. */
+struct session *get_conn_session(struct connection_info *conn_info) {
+    if (conn_info->session == NULL) {
+        conn_info->session = new_session();
+    }
+    return conn_info->session;
+}
+
+#endif /* ENABLE_SESSION_TRACKING
+
 
 /* Handles incoming client requests.
  * Returns boolean indicated if connection is done */
@@ -947,7 +1071,7 @@ int handle_client_server_event(struct epoll_event *ev) {
     }
 #endif
 
-    log_trace("Handling event type %s\n",
+    log_trace("*****HANDLING EVENT TYPE %s*****\n",
             type == CLIENT_LISTENER ? "REQUEST" : "RESPONSE");
 
     http_parser_settings *parser_settings;
@@ -988,10 +1112,19 @@ int handle_client_server_event(struct epoll_event *ev) {
             if (newline_loc) { // has '\n'
                 log_dbg("Found newline\n");
                 char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
-                char *token = "AAAAAAAAAAAAAAAAAAAA";
+                struct session *sess = get_conn_session(ev_data->conn_info);
+                if (sess == NULL) {
+                    log_error("Could not allocate new session\n");
+                    done = 1;
+                    continue;
+                    cancel_connection(ev_data);
+                }
+                char *token = sess->session_id;
+                log_dbg("Found SESSION_ID: %s\n", token);
                 // @Todo(Travis) create token
                 // @Todo(Travis) create "user db" mapping sess_ids --> connection
-                int insert_header_len = snprintf(insert_header, sizeof(insert_header),
+                int insert_header_len = snprintf(insert_header,
+                        sizeof(insert_header),
                         SET_COOKIE_HEADER_FORMAT, token);
                 size_t insert_offset = first_response_line->len - count
                         + (newline_loc - buf + 1);
@@ -1015,8 +1148,8 @@ int handle_client_server_event(struct epoll_event *ev) {
         }
 #endif
         log_dbg("Sending data normally\n");
-        done |= do_http_parse_send(buf, count, ev_data, parser_settings, NULL, 0,
-                0);
+        done |= do_http_parse_send(buf, count, ev_data, parser_settings, NULL,
+                0, 0);
     }
 
 #if ENABLE_SESSION_TRACKING
@@ -1038,7 +1171,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
             buf, len);
 
-    log_dbg("Parsed %ld / %ld bytes\n", nparsed, len);
+    log_trace("Parsed %ld / %ld bytes\n", nparsed, len);
 
     if (ev_data->parser.upgrade) {
         /* Wants to upgrade connection */
@@ -1079,7 +1212,8 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
             log_error("sendall failed\n");
             return 1;
         }
-    } else { /* Send normal buf */
+    } else {
+        /* Send normal buf */
         s = sendall(ev_data->send_fd, buf, len);
         if (s < 0) {
             log_error("sendall failed\n");
@@ -1198,6 +1332,9 @@ void init_structures(char *error_page_file) {
     init_error_page(error_page_file);
     init_config_vars();
     init_page_conf();
+#if ENABLE_SESSION_TRACKING
+    memset(current_sessions, 0, sizeof(current_sessions));
+#endif
 }
 
 int main(int argc, char *argv[]) {
@@ -1276,6 +1413,13 @@ int main(int argc, char *argv[]) {
 
         /* Block indefinitely */
         n = epoll_wait(efd, events, MAXEVENTS, -1);
+
+        /* Set time for tracking session expiration */
+#if ENABLE_SESSION_TRACKING
+        time(&current_time);
+        next_session_expiration_time = current_time + SHIM_SESSID_AGE_SEC;
+#endif
+
         for (i = 0; i < n; i++) {
             handle_event(efd, &events[i], sfd);
         }
