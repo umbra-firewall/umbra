@@ -770,7 +770,8 @@ page_conf_optional = {
         HTTPReqsOption('request_types', minLen=1,
                        allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
         BoolOption('requires_login'),
-        BoolOption('csrf_protect')
+        BoolOption('has_csrf_form'),
+        BoolOption('receives_csrf_form_action')
         }.union(deepcopy(param_conf_optional))
 
 default_page_conf_required = {deepcopy(x) for x in page_conf_required.union(page_conf_optional)

@@ -95,14 +95,17 @@ void print_page_conf(struct page_conf *p, int depth) {
 
     printf_indent(depth, "\"%s\" {\n", p->name);
 
+    print_http_req_field(request_types);
+    print_bool_field(restrict_params);
+    print_bool_field(has_csrf_form);
+    print_bool_field(receives_csrf_form_action);
+    print_bool_field(requires_login);
+
     print_whitelist_field(whitelist);
     print_whitelist2_field(whitelist);
     print_int_field(max_param_len);
-    print_bool_field(restrict_params);
-    print_http_req_field(request_types);
-    print_bool_field(requires_login);
-    print_int_field(params_len);
 
+    print_int_field(params_len);
     printf_indent(depth + 1, ".params = {\n");
     for (i = 0; i < p->params_len; i++) {
         print_params(&p->params[i], depth + 2);
