@@ -600,7 +600,7 @@ void check_request_type(struct event_data *ev_data) {
 }
 
 /* Find location and size of argument name and value */
-static void parse_argument_name_value(char *arg, size_t arg_len, char **name,
+void parse_argument_name_value(char *arg, size_t arg_len, char **name,
         size_t *name_len, char **value, size_t *value_len) {
     char *n, *v;
     size_t n_len, v_len;
@@ -884,6 +884,26 @@ char *extract_sessid_cookie_value(char *cookie_header_value) {
     return NULL;
 }
 
+/* Fills buffer with random bytes from /dev/urandom. Returns 0 on success and
+ * -1 on failure. */
+int fill_rand_bytes(char *buf, size_t len) {
+    int rc = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return -1;
+    }
+    if (read(fd, buf, len) != len) {
+        log_error("Did not read enough bytes from /dev/urandom\n");
+        rc = -1;
+    }
+    if (close(fd) < 0) {
+        perror("close");
+        rc = -1;
+    }
+    return rc;
+}
+
 
 /* Find session associated with cookie */
 #if ENABLE_SESSION_TRACKING
@@ -963,26 +983,6 @@ void clear_session(struct session *sess) {
 /* Returns whether session entry is ununsed */
 bool is_session_entry_clear(struct session *sess) {
     return sess->session_id[0] == 0;
-}
-
-/* Fills buffer with random bytes from /dev/urandom. Returns 0 on success and
- * -1 on failure. */
-int fill_rand_bytes(char *buf, size_t len) {
-    int rc = 0;
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return -1;
-    }
-    if (read(fd, buf, len) != len) {
-        log_error("Did not read enough bytes from /dev/urandom\n");
-        rc = -1;
-    }
-    if (close(fd) < 0) {
-        perror("close");
-        rc = -1;
-    }
-    return rc;
 }
 
 /* Tries to find session with given sess_id. Returns NULL if none is found. */
