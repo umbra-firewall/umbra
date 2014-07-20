@@ -501,7 +501,7 @@ class HTTPReqsOption(StringArrOption):
 class MultiOption(Option):
     """Represents option that contains child options"""
 
-    def __init__(self, name, requiredConf, optionalConf, isTopLevel=False):
+    def __init__(self, name, requiredConf, optionalConf, isTopLevel=False, nameVisitOrder=None):
         self.name = name
         self.value = None
         self.jsonInput = None
@@ -515,12 +515,44 @@ class MultiOption(Option):
         self._instance_name = None
         self.isTopLevel = isTopLevel
 
+        if nameVisitOrder != None:
+            self.assrt(isinstance(nameVisitOrder, list), "nameVisitOrder must be a list")
+            optNames = set((x.name for x in self.getAllOptions()))
+            self.assrt(set(nameVisitOrder) == optNames,
+                      "Elements nameVisitOrder do not match names of options\n" +
+                      ("nameVisitOrder=%s, optionNames=%s" % (sorted(nameVisitOrder), sorted(optNames))))
+        self.nameVisitOrder = nameVisitOrder
+
+    def getAllOptionsSorted(self):
+        if self.nameVisitOrder != None:
+            n2c = self._getName2Conf()
+            for x in self.nameVisitOrder:
+                yield n2c[x]
+        else:
+            for x in self.getAllOptions():
+                yield x
+
+    def getRequiredOptionsSorted(self):
+        for x in self.getAllOptionsSorted():
+            if x in self.requiredConf:
+                yield x
+
+    def getOptionalOptionsSorted(self):
+        for x in self.getAllOptionsSorted():
+            if x in self.optionalConf:
+                yield x
+
+    def valueSorted(self, value):
+        for x in self.getAllOptionsSorted():
+            if x.name in value.keys():
+                yield (x.name, value[x.name])
+
     def validate(self):
-        for x in self.requiredConf:
+        for x in self.getRequiredOptionsSorted():
             self.assrt(x.valueHasBeenSet, 'Option %s has not been specified' %
                        x.name)
             x.validate()
-        for x in self.optionalConf:
+        for x in self.getOptionalOptionsSorted():
             if x.valueHasBeenSet:
                 x.validate()
 
@@ -532,7 +564,7 @@ class MultiOption(Option):
         name2conf = self._getName2Conf()
 
         # Set option values
-        for optname, optval in sorted(value.items(), key=lambda x: x[0]):
+        for optname, optval in self.valueSorted(value):
             self.assrt(optname in name2conf, 'Unknown option "%s"' % optname)
             name2conf[optname].setValue(optval)
 
@@ -737,7 +769,8 @@ page_conf_optional = {
         BoolOption('restrict_params'),
         HTTPReqsOption('request_types', minLen=1,
                        allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
-        BoolOption('requires_login')
+        BoolOption('requires_login'),
+        BoolOption('csrf_protect')
         }.union(deepcopy(param_conf_optional))
 
 default_page_conf_required = {deepcopy(x) for x in page_conf_required.union(page_conf_optional)
@@ -778,7 +811,7 @@ toplevel_conf = MultiOption('toplevel', {
         default_page_conf,
         PageConfOption('page_config', page_conf_required, page_conf_optional,
                        defaultConf=default_page_conf)
-        }, set())
+        }, set(), nameVisitOrder=['default_page_config', 'global_config', 'page_config'])
 
 
 def parse_config(config_file):
