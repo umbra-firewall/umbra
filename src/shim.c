@@ -131,7 +131,7 @@ int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data) {
     if (bytearray_append(b, at, length) < 0) {
         cancel_connection(ev_data);
-        log_warn("Cancelling request because out of memory\n");
+        log_error("Cancelling request because out of memory\n");
         return -1;
     }
     return 0;
@@ -412,7 +412,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->listen_fd = listen_fd;
         ev_data->send_fd = send_fd;
         ev_data->conn_info = conn_info;
-        ev_data->page_match = NULL;
 
         if ((ev_data->url = new_bytearray()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
@@ -471,6 +470,7 @@ struct connection_info *init_conn_info(int infd, int outfd) {
 
     conn_info->client_ev_data = client_ev_data;
     conn_info->server_ev_data = server_ev_data;
+    conn_info->page_match = NULL;
 
     return conn_info;
 
@@ -593,7 +593,7 @@ void check_request_type(struct event_data *ev_data) {
     log_trace("Checking request type %s\n", http_method_str(method));
 
     int http_method = http_parser_method_to_shim(method);
-    if (!(ev_data->page_match->request_types & http_method)) {
+    if (!(ev_data->conn_info->page_match->request_types & http_method)) {
         log_error("Request type %s not allowed\n", http_method_str(method));
         cancel_connection(ev_data);
     }
@@ -745,7 +745,7 @@ void check_arg_len_whitelist(struct params *param, char *value,
 void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     log_dbg("arg=\"%.*s\", len=%ld\n", (int) len, arg, len);
 
-    if (len <= 0) {
+    if (len < 0) {
         log_warn("Malformed argument\n");
         cancel_connection(ev_data);
     }
@@ -758,7 +758,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     log_dbg("  name=\"%.*s\" len=%ld, value=\"%.*s\" len=%ld\n", (int) name_len,
             name, name_len, (int) value_len, value, value_len);
 
-    struct page_conf *page_match = ev_data->page_match;
+    struct page_conf *page_match = ev_data->conn_info->page_match;
     struct params *param = find_matching_param(name, name_len,
             page_match->params, page_match->params_len, ev_data);
 
@@ -768,7 +768,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
             cancel_connection(ev_data);
             return;
         } else {
-            param = &ev_data->default_params;
+            param = &ev_data->conn_info->default_params;
         }
     }
     log_trace("Using param \"%s\"\n", param->name ? param->name : "default");
@@ -947,11 +947,11 @@ void find_session_from_cookie(struct event_data *ev_data) {
 
 /* Do checks that are possible after the header is received */
 void do_client_header_complete_checks(struct event_data *ev_data) {
-    ev_data->page_match = find_matching_page((char *) ev_data->url->data,
+    ev_data->conn_info->page_match = find_matching_page((char *) ev_data->url->data,
             ev_data->url->len);
-    log_trace("page_match=\"%s\"\n", ev_data->page_match->name);
+    log_trace("page_match=\"%s\"\n", ev_data->conn_info->page_match->name);
 
-    copy_default_params(ev_data->page_match, &ev_data->default_params);
+    copy_default_params(ev_data->conn_info->page_match, &ev_data->conn_info->default_params);
 
 #if ENABLE_REQUEST_TYPE_CHECK
     check_request_type(ev_data);
@@ -1146,13 +1146,11 @@ int handle_client_server_event(struct epoll_event *ev) {
                 if (sess == NULL) {
                     log_error("Could not allocate new session\n");
                     done = 1;
-                    continue;
                     cancel_connection(ev_data);
+                    continue;
                 }
                 char *token = sess->session_id;
                 log_dbg("Found SESSION_ID: %s\n", token);
-                // @Todo(Travis) create token
-                // @Todo(Travis) create "user db" mapping sess_ids --> connection
                 int insert_header_len = snprintf(insert_header,
                         sizeof(insert_header),
                         SET_COOKIE_HEADER_FORMAT, token);
@@ -1188,26 +1186,25 @@ int handle_client_server_event(struct epoll_event *ev) {
     }
 #endif
 
-    return done;
-}
 
-/* Parse http buffer and run checks. If insert_header is not NULL, it is sent
- * at insert_offset. */
-int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
-        http_parser_settings *parser_settings, char *insert_header,
-        size_t insert_header_len, size_t insert_offset) {
-    int s;
-    event_t type = ev_data->type;
-    size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
-            buf, len);
-
-    log_trace("Parsed %ld / %ld bytes\n", nparsed, len);
-
-    if (ev_data->parser.upgrade) {
-        /* Wants to upgrade connection */
-        log_warn("HTTP upgrade not supported\n");
-        return 1;
+#if ENABLE_CSRF_PROTECTION
+    /* Send CSRF token JavaScript snippet */
+    if (type == SERVER_LISTENER) {
+        log_dbg("Checking if page has CSRF protection\n");
+        if (!is_conn_cancelled(ev_data) && ev_data->conn_info->page_match
+                && ev_data->conn_info->page_match->has_csrf_form) {
+            log_trace("Page has CSRF protected form; sending JS snippet\n");
+            int s;
+            s = sendall(ev_data->send_fd, INSERT_HIDDEN_TOKEN_JS,
+                    INSERT_HIDDEN_TOKEN_JS_STRLEN);
+            if (s < 0) {
+                log_error("sendall failed\n");
+                cancel_connection(ev_data);
+                done = 1;
+            }
+        }
     }
+#endif
 
     if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
         if (send_error_page(ev_data->listen_fd)) {
@@ -1221,11 +1218,33 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         return 1;
     }
 
+    return done;
+}
+
+/* Parse http buffer and run checks. If insert_header is not NULL, it is sent
+ * at insert_offset. */
+int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
+        http_parser_settings *parser_settings, char *insert_header,
+        size_t insert_header_len, size_t insert_offset) {
+    int s;
+    size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
+            buf, len);
+
+    log_trace("Parsed %ld / %ld bytes\n", nparsed, len);
+
+    if (ev_data->parser.upgrade) {
+        /* Wants to upgrade connection */
+        log_warn("HTTP upgrade not supported\n");
+        cancel_connection(ev_data);
+        return 1;
+    }
+
     if (insert_header) { /* Insert header */
         /* Send first line */
         s = sendall(ev_data->send_fd, buf, insert_offset);
         if (s < 0) {
             log_error("sendall failed\n");
+            cancel_connection(ev_data);
             return 1;
         }
 
@@ -1233,6 +1252,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         s = sendall(ev_data->send_fd, insert_header, insert_header_len);
         if (s < 0) {
             log_error("sendall failed\n");
+            cancel_connection(ev_data);
             return 1;
         }
 
@@ -1240,6 +1260,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         s = sendall(ev_data->send_fd, buf + insert_offset, len - insert_offset);
         if (s < 0) {
             log_error("sendall failed\n");
+            cancel_connection(ev_data);
             return 1;
         }
     } else {
@@ -1247,6 +1268,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         s = sendall(ev_data->send_fd, buf, len);
         if (s < 0) {
             log_error("sendall failed\n");
+            cancel_connection(ev_data);
             return 1;
         }
     }

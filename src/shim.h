@@ -112,6 +112,18 @@ typedef enum {
 #define COOKIE_HEADER_FIELD_NAME "Cookie"
 #define COOKIE_HEADER_FIELD_STRLEN (sizeof(COOKIE_HEADER_FIELD_NAME) - 1)
 
+#define INSERT_HIDDEN_TOKEN_JS \
+    "<script>" \
+    "var input = document.createElement(\"input\");" \
+    "input.setAttribute(\"type\", \"hidden\");" \
+    "input.setAttribute(\"name\", \"csrf_token\");" \
+    "input.setAttribute(\"value\", \"AAAAAAAAAAAAAAAAAAAA\");" \
+    "var forms = document.getElementsByTagName('form');" \
+    "for (var i = 0, length = forms.length; i < length; i ++) {" \
+    "  forms[i].appendChild(input);" \
+    "}" \
+    "</script>"
+#define INSERT_HIDDEN_TOKEN_JS_STRLEN (sizeof(INSERT_HIDDEN_TOKEN_JS) - 1)
 
 /* Structures */
 
@@ -121,20 +133,19 @@ struct event_data {
     int listen_fd;
     int send_fd;
     http_parser parser;
-    struct params default_params;
     struct connection_info *conn_info;
     bytearray_t *url;
     bytearray_t *body;
 #if ENABLE_SESSION_TRACKING
     bytearray_t *cookie;
 #endif
-    struct page_conf *page_match;
     event_t type : 8;
     bool is_cancelled : 1;
     bool msg_begun : 1;
     bool headers_complete : 1;
     bool msg_complete : 1;
     bool next_header_value_is_cookie : 1;
+    bool next_header_value_is_content_length : 1;
 };
 
 struct session {
@@ -146,6 +157,8 @@ struct connection_info {
     struct event_data *client_ev_data;
     struct event_data *server_ev_data;
     struct session *session;
+    struct params default_params;
+    struct page_conf *page_match;
 };
 
 
