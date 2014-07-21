@@ -2,18 +2,22 @@
     "global_config": {
         "max_header_field_len": 30,
         "max_header_value_len": 180,
-        "enable_header_field_check": true,
-        "enable_header_value_check": true,
+        "enable_header_field_len_check": true,
+        "enable_header_value_len_check": true,
         "enable_request_type_check": true,
         "enable_param_len_check": true,
         "enable_param_whitelist_check": true,
-        "enable_url_directory_traversal_check": true
+        "enable_url_directory_traversal_check": true,
+        "enable_csrf_protection": true,
+        "session_life_seconds": 300
     },
 
     "default_page_config": {
         "request_types": ["GET", "HEAD"],
         "restrict_params": false,
         "requires_login": false,
+        "has_csrf_form": false,
+        "receives_csrf_form_action": false,
 
         "max_param_len": 30,
         "whitelist": "[a-zA-z0-9_]"
@@ -21,11 +25,13 @@
     
     "page_config": {
         "/": {
-            "restrict_params": true
+            "restrict_params": true,
+            "has_csrf_form": true
         },
         
         "/index.html": {
-            "restrict_params": true
+            "restrict_params": true,
+            "has_csrf_form": true
         },
         
         "/cgi-bin/login": {
@@ -43,6 +49,7 @@
         
         "/cgi-bin/upload": {
             "request_types": ["POST"],
+            "receives_csrf_form_action": true,
             "params": {
                 "file": {
                     "max_param_len": 1e6,
@@ -58,6 +65,7 @@
         
         "/cgi-bin/favorites": {
             "request_types": ["POST"],
+            "receives_csrf_form_action": true,
             "params": {
                 "favorite_letters": {
                     "max_param_len": 26,
