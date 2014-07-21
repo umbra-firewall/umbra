@@ -1354,8 +1354,16 @@ int handle_client_server_event(struct epoll_event *ev) {
                 && ev_data->conn_info->page_match->has_csrf_form) {
             log_trace("Page has CSRF protected form; sending JS snippet\n");
             int s;
-            s = sendall(ev_data->send_fd, INSERT_HIDDEN_TOKEN_JS,
-                    INSERT_HIDDEN_TOKEN_JS_STRLEN);
+            char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
+            int snippet_len = snprintf(js_snippet, sizeof(js_snippet),
+                    INSERT_HIDDEN_TOKEN_JS_FORMAT,
+                    ev_data->conn_info->session->session_id);
+            if (snippet_len < 0) {
+                perror("snprintf");
+                cancel_connection(ev_data);
+                done = 1;
+            }
+            s = sendall(ev_data->send_fd, js_snippet, snippet_len);
             if (s < 0) {
                 log_error("sendall failed\n");
                 cancel_connection(ev_data);

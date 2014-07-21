@@ -126,18 +126,19 @@
 #define CONTENT_ENCODING_HEADER_STRLEN \
     (sizeof(CONTENT_ENCODING_HEADER) - 1)
 
-#define INSERT_HIDDEN_TOKEN_JS \
+#define INSERT_HIDDEN_TOKEN_JS_FORMAT \
     "<script>" \
     "var input = document.createElement(\"input\");" \
     "input.setAttribute(\"type\", \"hidden\");" \
     "input.setAttribute(\"name\", \"csrf_token\");" \
-    "input.setAttribute(\"value\", \"AAAAAAAAAAAAAAAAAAAA\");" \
+    "input.setAttribute(\"value\", \"%s\");" \
     "var forms = document.getElementsByTagName('form');" \
     "for (var i = 0, length = forms.length; i < length; i ++) {" \
     "  forms[i].appendChild(input);" \
     "}" \
     "</script>"
-#define INSERT_HIDDEN_TOKEN_JS_STRLEN (sizeof(INSERT_HIDDEN_TOKEN_JS) - 1)
+#define INSERT_HIDDEN_TOKEN_JS_STRLEN \
+    (sizeof(INSERT_HIDDEN_TOKEN_JS_FORMAT) + SHIM_SESSID_LEN - 3)
 
 
 /* Enums */
