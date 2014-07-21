@@ -153,6 +153,17 @@ int on_message_complete_cb(http_parser *p) {
     }
 #endif
 
+#if ENABLE_CSRF_PROTECTION
+    if (ev_data->type == CLIENT_LISTENER
+            && ev_data->conn_info->page_match->receives_csrf_form_action
+            && !ev_data->found_csrf_correct_token) {
+        log_warn("Page configured to receive CSRF form action, but no CSRF "
+                "token parameter found\n");
+        cancel_connection(ev_data);
+        return -1;
+    }
+#endif
+
     return 0;
 }
 
@@ -899,6 +910,34 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
             name, name_len, (int) value_len, value, value_len);
 
     struct page_conf *page_match = ev_data->conn_info->page_match;
+
+#if ENABLE_CSRF_PROTECTION
+    /* Check if argument is CSRF token */
+    if (page_match->receives_csrf_form_action && name_len == CSRF_TOKEN_NAME_LEN
+            && memcmp(name, CSRF_TOKEN_NAME, CSRF_TOKEN_NAME_LEN) == 0) {
+
+        /* Check that valid session cookie was sent */
+        if (!ev_data->conn_info->session) {
+            log_warn("Request did not have a valid session cookie, which "
+                    "is required on pages that receive CSRF form action\n");
+            cancel_connection(ev_data);
+            return;
+        }
+
+        /* Check that CSRF token matches SESSION_ID */
+        if (SHIM_SESSID_LEN != value_len
+                || memcmp(value, ev_data->conn_info->session->session_id,
+                SHIM_SESSID_LEN) != 0) {
+            log_warn("Invalid CSRF token found\n");
+            cancel_connection(ev_data);
+        } else {
+            log_trace("Correct CSRF token found\n");
+            ev_data->found_csrf_correct_token = true;
+        }
+        return;
+    }
+#endif
+
     struct params *param = find_matching_param(name, name_len,
             page_match->params, page_match->params_len, ev_data);
 
@@ -1066,6 +1105,11 @@ void find_session_from_cookie(struct event_data *ev_data) {
 
     ev_data->conn_info->session = search_session(sess_id);
 
+    /* Renew expiration if session exists */
+    if (ev_data->conn_info->session) {
+        renew_session(ev_data->conn_info->session);
+    }
+
 #ifdef DEBUG
     if (ev_data->conn_info->session) {
         log_trace("Found existing session \"%s\"\n",
@@ -1115,6 +1159,11 @@ void clear_session(struct session *sess) {
 /* Returns whether session entry is ununsed */
 bool is_session_entry_clear(struct session *sess) {
     return sess->session_id[0] == 0;
+}
+
+/* Sets expiration time to next session expiration time */
+void renew_session(struct session *sess) {
+    sess->expires_at = next_session_expiration_time;
 }
 
 /* Tries to find session with given sess_id. Returns NULL if none is found. */
@@ -1403,6 +1452,8 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         /* Wants to upgrade connection */
         log_warn("HTTP upgrade not supported\n");
         cancel_connection(ev_data);
+        return 1;
+    } else if (is_conn_cancelled(ev_data)) {
         return 1;
     }
 

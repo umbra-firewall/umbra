@@ -126,11 +126,14 @@
 #define CONTENT_ENCODING_HEADER_STRLEN \
     (sizeof(CONTENT_ENCODING_HEADER) - 1)
 
+#define CSRF_TOKEN_NAME "_umbra_csrf_token"
+#define CSRF_TOKEN_NAME_LEN (sizeof(CSRF_TOKEN_NAME) - 1)
+
 #define INSERT_HIDDEN_TOKEN_JS_FORMAT \
     "<script>" \
     "var input = document.createElement(\"input\");" \
     "input.setAttribute(\"type\", \"hidden\");" \
-    "input.setAttribute(\"name\", \"csrf_token\");" \
+    "input.setAttribute(\"name\", \"" CSRF_TOKEN_NAME "\");" \
     "input.setAttribute(\"value\", \"%s\");" \
     "var forms = document.getElementsByTagName('form');" \
     "for (var i = 0, length = forms.length; i < length; i ++) {" \
@@ -186,6 +189,10 @@ struct event_data {
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
+#endif
+
+#if ENABLE_CSRF_PROTECTION
+    bool found_csrf_correct_token : 1;
 #endif
 };
 
@@ -277,6 +284,7 @@ char *extract_sessid_cookie_value(char *cookie_header_value);
 struct session *get_conn_session(struct connection_info *conn_info);
 struct session *new_session();
 bool is_session_entry_clear(struct session *sess);
+void renew_session(struct session *sess);
 void clear_session(struct session *sess);
 struct session *search_session(char *sess_id);
 void expire_sessions();
