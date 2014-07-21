@@ -165,11 +165,15 @@ struct event_data {
 
 #if ENABLE_SESSION_TRACKING
     bytearray_t *cookie;
+    const char *content_len_value;
+    size_t content_len_value_len;
 #endif
 
 #if ENABLE_HEADERS_TRACKING
     bytearray_t *header_field;
     bytearray_t *header_value;
+    const char *header_value_loc;
+    const char *header_field_loc;
 #endif
 
     event_t type : 8;
@@ -178,7 +182,10 @@ struct event_data {
     bool headers_complete : 1;
     bool msg_complete : 1;
     bool just_visited_header_field : 1;
+
+#if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
+#endif
 };
 
 struct session {

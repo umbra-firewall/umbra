@@ -183,6 +183,7 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
 }
 
 /* Inspects current header pair */
+#if ENABLE_SESSION_TRACKING
 void check_header_pair(struct event_data *ev_data) {
     char *field = ev_data->header_field->data;
     char *value = ev_data->header_value->data;
@@ -241,9 +242,12 @@ void check_header_pair(struct event_data *ev_data) {
             /* Handle Content-Length */
             log_dbg("Content-Length specified\n");
             ev_data->content_length_specified = true;
+            ev_data->content_len_value_len = value_len;
+            ev_data->content_len_value = ev_data->header_value_loc;
         }
     }
 }
+#endif
 
 #if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
@@ -294,6 +298,7 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 
 /* Updates current header field or value.
  * Inspects previous header once a new header starts. */
+#if ENABLE_HEADERS_TRACKING
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length) {
     bytearray_t *ba;
@@ -302,6 +307,14 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         ba = ev_data->header_field;
     } else {
         ba = ev_data->header_value;
+    }
+
+
+    /* Set original field and value locations */
+    if (is_header_field && !ev_data->just_visited_header_field) {
+        ev_data->header_field_loc = at;
+    } else if (!is_header_field && ev_data->just_visited_header_field) {
+        ev_data->header_value_loc = at;
     }
 
     /* Inspect header if field and value are present. */
@@ -315,6 +328,7 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
     update_bytearray(ba, at, length, ev_data);
     ev_data->just_visited_header_field = is_header_field;
 }
+#endif
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_PARAM_CHECKS
@@ -545,6 +559,8 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
+
+        ev_data->header_value_loc = NULL;
 #endif
 
         http_parser_init(&ev_data->parser, parser_type);
@@ -1365,7 +1381,7 @@ int handle_client_server_event(struct epoll_event *ev) {
 }
 
 /* Parse http buffer and run checks. If insert_header is not NULL, it is sent
- * at insert_offset. */
+ * at insert_offset. Returns done sending on socket. */
 int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         http_parser_settings *parser_settings, char *insert_header,
         size_t insert_header_len, size_t insert_offset) {
@@ -1382,8 +1398,8 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         return 1;
     }
 
-    //@Todo(Travis) Handle Content-length if CSRF form
 
+#if ENABLE_SESSION_TRACKING
     if (insert_header) { /* Insert header */
         /* Send first line */
         s = sendall(ev_data->send_fd, buf, insert_offset);
@@ -1392,6 +1408,8 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
             cancel_connection(ev_data);
             return 1;
         }
+        buf += insert_offset;
+        len -= insert_offset;
 
         /* Send insert header */
         s = sendall(ev_data->send_fd, insert_header, insert_header_len);
@@ -1401,21 +1419,68 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
             return 1;
         }
 
-        /* Send rest of buf */
-        s = sendall(ev_data->send_fd, buf + insert_offset, len - insert_offset);
-        if (s < 0) {
-            log_error("sendall failed\n");
-            cancel_connection(ev_data);
-            return 1;
+        if (ev_data->conn_info->page_match->has_csrf_form
+                && ev_data->content_length_specified) {
+            size_t send_len;
+
+            /* Insert new Content-Length, accounting for JS snippet length that
+             * is to be sent. */
+
+            log_trace("Replacing Content-Length that was found\n");
+
+            /* Send up to Content-Length value */
+            send_len = ev_data->content_len_value - buf;
+            s = sendall(ev_data->send_fd, buf, send_len);
+            if (s < 0) {
+                log_error("sendall failed\n");
+                cancel_connection(ev_data);
+                return 1;
+            }
+            buf += send_len;
+            len -= send_len;
+
+            /* Read original value */
+            size_t old_len;
+            if (sscanf(buf, "%ld\n", &old_len) != 1) {
+                log_error("Could not read Content-Length value: %.*s\n",
+                        (int) ev_data->content_len_value_len, buf);
+                cancel_connection(ev_data);
+                return 1;
+            }
+
+            /* Write new value to string */
+            size_t new_len = old_len + INSERT_HIDDEN_TOKEN_JS_STRLEN;
+            char new_len_buf[ev_data->content_len_value_len + 10];
+            int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
+                    "%ld", new_len);
+            if (new_len_buf_len < 0) {
+                log_error("Could not write new calculated Content-Length "
+                        "to buffer\n");
+                cancel_connection(ev_data);
+                return 1;
+            }
+
+            /* Send new value */
+            s = sendall(ev_data->send_fd, new_len_buf, new_len_buf_len);
+            if (s < 0) {
+                log_error("sendall failed\n");
+                cancel_connection(ev_data);
+                return 1;
+            }
+
+            /* Skip over old length */
+            buf += ev_data->content_len_value_len;
+            len -= ev_data->content_len_value_len;
         }
-    } else {
-        /* Send normal buf */
-        s = sendall(ev_data->send_fd, buf, len);
-        if (s < 0) {
-            log_error("sendall failed\n");
-            cancel_connection(ev_data);
-            return 1;
-        }
+    }
+#endif
+
+    /* Send rest of buf */
+    s = sendall(ev_data->send_fd, buf, len);
+    if (s < 0) {
+        log_error("sendall failed\n");
+        cancel_connection(ev_data);
+        return 1;
     }
 
     return 0;
