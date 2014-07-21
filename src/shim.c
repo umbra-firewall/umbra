@@ -36,8 +36,19 @@ http_parser_settings server_parser_settings = {
     .on_message_begin = on_message_begin_cb,
     .on_url = NULL,
     .on_status = on_status_cb,
+
+#if ENABLE_HEADER_FIELD_CHECK
+    .on_header_field = on_header_field_cb,
+#else
     .on_header_field = NULL,
+#endif
+
+#if ENABLE_HEADER_VALUE_CHECK
+    .on_header_value = on_header_value_cb,
+#else
     .on_header_value = NULL,
+#endif
+
     .on_headers_complete = on_headers_complete_cb,
     .on_body = on_body_cb,
     .on_message_complete = on_message_complete_cb
@@ -53,6 +64,7 @@ time_t current_time, next_session_expiration_time;
 
 /* Set connection to cancelled state */
 void cancel_connection(struct event_data *ev_data) {
+    log_trace("Cancelling connection\n.");
     ev_data->is_cancelled = true;
 }
 
@@ -101,10 +113,10 @@ void copy_default_params(struct page_conf *page_conf, struct params *params) {
 }
 
 int on_headers_complete_cb(http_parser *p) {
-    log_trace("***HEADERS COMPLETE***\n");
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->headers_complete = true;
 
+#if ENABLE_HEADERS_TRACKING
     /* Check last header pair */
     if (ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
@@ -118,6 +130,9 @@ int on_headers_complete_cb(http_parser *p) {
         ev_data->header_field = NULL;
         ev_data->header_value = NULL;
     }
+#endif
+
+    log_trace("***HEADERS COMPLETE***\n");
 
     if (ev_data->type == CLIENT_LISTENER) {
         do_client_header_complete_checks(ev_data);
@@ -191,17 +206,42 @@ void check_header_pair(struct event_data *ev_data) {
 
 
     if (ev_data->type == CLIENT_LISTENER ) {
+        /* Request Headers */
 
         /* Handle Cookie header */
-        if (field_len == COOKIE_HEADER_FIELD_STRLEN
-                && strcasecmp(COOKIE_HEADER_FIELD, field) == 0) {
+        if (field_len == COOKIE_HEADER_STRLEN
+                && strcasecmp(COOKIE_HEADER, field) == 0) {
             log_trace("Found Cookie header\n");
             /* Copy cookie, including NUL byte */
             update_bytearray(ev_data->cookie, value, value_len + 1, ev_data);
         }
     } else {
-        //@todo(Travis) check for TE, Transfer-Encoding, Content-Length
-        ;
+        /* Response Headers */
+
+        if (field_len == TRANSFER_ENCODING_HEADER_STRLEN
+                && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0) {
+            /* Warn against Transfer-Encoding */
+            log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
+            cancel_connection(ev_data);
+
+        } else if (field_len == TE_HEADER_STRLEN
+                && strcasecmp(TE_HEADER, field) == 0) {
+            /* Warn against TE abbreviated version */
+            log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
+            cancel_connection(ev_data);
+
+        } else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
+                && strcasecmp(CONTENT_ENCODING_HEADER, field) == 0) {
+            /* Warn against Content-Encoding */
+            log_warn("Content-Encoding \"%s\" is not supported\n", value);
+            cancel_connection(ev_data);
+
+        } else if (field_len == CONTENT_LENGTH_HEADER_STRLEN
+                && strcasecmp(CONTENT_LENGTH_HEADER, field) == 0) {
+            /* Handle Content-Length */
+            log_dbg("Content-Length specified\n");
+            ev_data->content_length_specified = true;
+        }
     }
 }
 
@@ -211,7 +251,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
 
 #if ENABLE_HEADER_FIELD_LEN_CHECK
-    if (length > MAX_HEADER_FIELD_LEN) {
+    if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_FIELD_LEN) {
         log_info("Blocked request because header field length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_FIELD_LEN);
@@ -233,8 +273,9 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("Header value: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
+
 #if ENABLE_HEADER_VALUE_LEN_CHECK
-    if (length > MAX_HEADER_VALUE_LEN) {
+    if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_VALUE_LEN) {
         log_info("Blocked request because header value length %ld; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_VALUE_LEN);
@@ -1150,6 +1191,23 @@ struct session *get_conn_session(struct connection_info *conn_info) {
     return conn_info->session;
 }
 
+/* Writes Set-Cookie header to buf */
+int populate_set_cookie_header(char *buf, size_t buf_len,
+        struct event_data *ev_data) {
+    struct session *sess = get_conn_session(ev_data->conn_info);
+    if (sess == NULL) {
+        log_error("Could not allocate new session\n");
+        cancel_connection(ev_data);
+        return -1;
+    }
+    char *token = sess->session_id;
+    log_dbg("Sending SESSION_ID: %s\n", token);
+
+    int output_len = snprintf(buf, buf_len, SET_COOKIE_HEADER_FORMAT, token);
+
+    return output_len;
+}
+
 #endif /* ENABLE_SESSION_TRACKING */
 
 
@@ -1165,10 +1223,9 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 #if ENABLE_SESSION_TRACKING
     /* Cache first response to find where headers begin */
-    char *newline_loc;
-    bytearray_t *first_response_line = NULL;
+    bytearray_t *headers_cache = NULL;
     if (type == SERVER_LISTENER) {
-        if ((first_response_line = bytearray_new()) == NULL) {
+        if ((headers_cache = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             cancel_connection(ev_data);
             return 1;
@@ -1205,49 +1262,60 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 #if ENABLE_SESSION_TRACKING
         /* Add session Set-Cookie header */
-        if (type == SERVER_LISTENER && first_response_line) {
-            log_dbg("Caching first line of response\n");
-            if (bytearray_append(first_response_line, buf, count) < 0) {
+        if (type == SERVER_LISTENER && headers_cache) {
+            log_dbg("Caching first part of response\n");
+            if (bytearray_append(headers_cache, buf, count) < 0) {
                 log_error("bytearray_append failed\n");
                 cancel_connection(ev_data);
                 done = 1;
-                continue;
+                break;
             }
-            newline_loc = memchr(buf, '\n', count);
-            if (newline_loc) { // has '\n'
-                log_dbg("Found newline\n");
-                char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
-                struct session *sess = get_conn_session(ev_data->conn_info);
-                if (sess == NULL) {
-                    log_error("Could not allocate new session\n");
-                    done = 1;
-                    cancel_connection(ev_data);
-                    continue;
-                }
-                char *token = sess->session_id;
-                log_dbg("Sending SESSION_ID: %s\n", token);
-                int insert_header_len = snprintf(insert_header,
-                        sizeof(insert_header),
-                        SET_COOKIE_HEADER_FORMAT, token);
-                size_t insert_offset = first_response_line->len - count
-                        + (newline_loc - buf + 1);
-                done |= do_http_parse_send(first_response_line->data,
-                        first_response_line->len, ev_data, parser_settings,
-                        insert_header, insert_header_len, insert_offset);
-                bytearray_free(first_response_line);
-                first_response_line = NULL;
-                continue;
-            } else if (first_response_line->len
-                    > MAX_HTTP_RESPONSE_FIRST_LINE_LEN) {
-                log_warn("Newline not found after %d bytes into response\n",
-                        MAX_HTTP_RESPONSE_FIRST_LINE_LEN);
+
+            /* Make safe to use C string funtions on bytearray until modified */
+            if (bytearray_nul_terminate(headers_cache) < 0) {
+                log_error("bytearray_nul_terminate failed\n");
                 cancel_connection(ev_data);
                 done = 1;
-                continue;
-            } else {
-                log_dbg("No newline found yet\n");
+                break;
+            }
+
+            if (strstr(headers_cache->data, "\r\n\r\n")
+                    || strstr(headers_cache->data, "\n\n")) {
+                /* Have all headers in buffer, so if Content-Length is specified,
+                 * then it is in the buffer. */
+
+                char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
+                int insert_header_len = populate_set_cookie_header(
+                        insert_header, sizeof(insert_header), ev_data);
+                if (insert_header_len < 0) {
+                    done = 1;
+                    break;
+                }
+
+                char *insert_header_loc = strchr(headers_cache->data, '\n') + 1;
+                size_t insert_offset = insert_header_loc - headers_cache->data;
+
+                done |= do_http_parse_send(headers_cache->data,
+                        headers_cache->len, ev_data, parser_settings,
+                        insert_header, insert_header_len, insert_offset);
+
+                bytearray_free(headers_cache);
+                headers_cache = NULL;
                 continue;
             }
+
+            /* Check if location found yet */
+            if (headers_cache->len > MAX_HTTP_RESPONSE_HEADERS_SIZE) {
+                log_warn("End of Headers not found after %d bytes into "
+                        "response; ""aborting\n",
+                        MAX_HTTP_RESPONSE_HEADERS_SIZE);
+                cancel_connection(ev_data);
+                done = 1;
+                break;
+            }
+
+            log_dbg("All response headers not received yet\n");
+            continue;
         }
 #endif
         log_dbg("Sending data normally\n");
@@ -1256,8 +1324,8 @@ int handle_client_server_event(struct epoll_event *ev) {
     }
 
 #if ENABLE_SESSION_TRACKING
-    if (first_response_line) {
-        bytearray_free(first_response_line);
+    if (headers_cache) {
+        bytearray_free(headers_cache);
     }
 #endif
 
@@ -1313,6 +1381,8 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         cancel_connection(ev_data);
         return 1;
     }
+
+    //@Todo(Travis) Handle Content-length if CSRF form
 
     if (insert_header) { /* Insert header */
         /* Send first line */

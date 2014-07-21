@@ -42,8 +42,8 @@
 #define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))
 #define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK)
 #define ENABLE_SESSION_TRACKING (ENABLE_CSRF_PROTECTION)
-#define ENABLE_HEADER_FIELD_CHECK (ENABLE_HEADER_FIELD_LEN_CHECK || ENABLE_SESSION_TRACKING)
-#define ENABLE_HEADER_VALUE_CHECK (ENABLE_HEADER_VALUE_LEN_CHECK || ENABLE_SESSION_TRACKING)
+#define ENABLE_HEADER_FIELD_CHECK (ENABLE_HEADER_FIELD_LEN_CHECK || ENABLE_HEADERS_TRACKING)
+#define ENABLE_HEADER_VALUE_CHECK (ENABLE_HEADER_VALUE_LEN_CHECK || ENABLE_HEADERS_TRACKING)
 #define ENABLE_HEADERS_TRACKING ENABLE_SESSION_TRACKING
 
 /* HTTP_REQ_* definitions must be defined in same order as http_parser */
@@ -106,17 +106,25 @@
 #define ESTIMATED_SET_COOKIE_HEADER_LEN \
     (sizeof(SET_COOKIE_HEADER_FORMAT) + SHIM_SESSID_LEN)
 
-#define MAX_HTTP_RESPONSE_FIRST_LINE_LEN 2048
+#define MAX_HTTP_RESPONSE_HEADERS_SIZE 8096
 
-#define COOKIE_HEADER_FIELD "Cookie"
-#define COOKIE_HEADER_FIELD_STRLEN (sizeof(COOKIE_HEADER_FIELD) - 1)
+#define COOKIE_HEADER "Cookie"
+#define COOKIE_HEADER_STRLEN (sizeof(COOKIE_HEADER) - 1)
 
-#define TRANSFER_ENCODING_HEADER_FIELD "Transfer-Encoding"
-#define TRANSFER_ENCODING_HEADER_FIELD_STRLEN \
-    (sizeof(TRANSFER_ENCODING_HEADER_FIELD) - 1)
+#define CONTENT_LENGTH_HEADER "Content-Length"
+#define CONTENT_LENGTH_HEADER_STRLEN \
+    (sizeof(CONTENT_LENGTH_HEADER) - 1)
 
-#define TE_HEADER_FIELD "TE"
-#define TE_HEADER_FIELD_STRLEN (sizeof(TE_HEADER_FIELD) - 1)
+#define TRANSFER_ENCODING_HEADER "Transfer-Encoding"
+#define TRANSFER_ENCODING_HEADER_STRLEN \
+    (sizeof(TRANSFER_ENCODING_HEADER) - 1)
+
+#define TE_HEADER "TE"
+#define TE_HEADER_STRLEN (sizeof(TE_HEADER) - 1)
+
+#define CONTENT_ENCODING_HEADER "Content-Encoding"
+#define CONTENT_ENCODING_HEADER_STRLEN \
+    (sizeof(CONTENT_ENCODING_HEADER) - 1)
 
 #define INSERT_HIDDEN_TOKEN_JS \
     "<script>" \
@@ -170,6 +178,7 @@ struct event_data {
     bool headers_complete : 1;
     bool msg_complete : 1;
     bool just_visited_header_field : 1;
+    bool content_length_specified : 1;
 };
 
 struct session {
@@ -244,6 +253,8 @@ bool str_to_url_encoded_memeq(const char *str, char *url_data,
         size_t url_data_len, struct event_data *ev_data);
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length);
+int populate_set_cookie_header(char *buf, size_t buf_len,
+        struct event_data *ev_data);
 
 /* Util functions */
 int http_parser_method_to_shim(enum http_method method);
