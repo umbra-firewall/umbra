@@ -228,11 +228,6 @@ class CodeHeader:
         for sd in self.struct_defs:
             f.write(sd.to_string() + '\n')
 
-        f.write('\n#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))\n')
-        f.write('#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK)\n')
-        f.write('#define ENABLE_SESSION_TRACKING (ENABLE_CSRF_PROTECTION)\n')
-        f.write('#define ENABLE_HEADER_FIELD_CHECK (ENABLE_HEADER_FIELD_LEN_CHECK || ENABLE_SESSION_TRACKING)\n')
-        f.write('#define ENABLE_HEADER_VALUE_CHECK (ENABLE_HEADER_VALUE_LEN_CHECK || ENABLE_SESSION_TRACKING)\n')
         f.write('#define WHITELIST_PARAM_LEN %d\n' % WhitelistOption.num_bytes)
 
         f.write('\n')

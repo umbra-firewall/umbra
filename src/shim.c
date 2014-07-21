@@ -105,6 +105,20 @@ int on_headers_complete_cb(http_parser *p) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->headers_complete = true;
 
+    /* Check last header pair */
+    if (ev_data->header_field->len != 0) {
+        check_header_pair(ev_data);
+
+        /* We are done with tracking headers */
+        bytearray_free(ev_data->header_field);
+        bytearray_free(ev_data->header_value);
+
+        /* Set pointers to NULL to make sure they are not
+         * free'd during cleanup */
+        ev_data->header_field = NULL;
+        ev_data->header_value = NULL;
+    }
+
     if (ev_data->type == CLIENT_LISTENER) {
         do_client_header_complete_checks(ev_data);
     }
@@ -153,6 +167,43 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
     return 0;
 }
 
+/* Inspects current header pair */
+void check_header_pair(struct event_data *ev_data) {
+    char *field = ev_data->header_field->data;
+    char *value = ev_data->header_value->data;
+    size_t field_len = ev_data->header_field->len;
+    size_t value_len = ev_data->header_value->len;
+
+    /* NUL terminate header field and value */
+    if (bytearray_append(ev_data->header_field, "\0", 1) < 0) {
+        log_error("Could not append to bytearray\n");
+        cancel_connection(ev_data);
+        return;
+    }
+    if (bytearray_append(ev_data->header_value, "\0", 1) < 0) {
+        log_error("Could not append to bytearray\n");
+        cancel_connection(ev_data);
+        return;
+    }
+
+    log_trace("Header: \"%s\": \"%s\"\n", ev_data->header_field->data,
+            ev_data->header_value->data);
+
+
+    if (ev_data->type == CLIENT_LISTENER ) {
+
+        /* Handle Cookie header */
+        if (field_len == COOKIE_HEADER_FIELD_STRLEN
+                && strcasecmp(COOKIE_HEADER_FIELD, field) == 0) {
+            log_trace("Found Cookie header\n");
+            /* Copy cookie, including NUL byte */
+            update_bytearray(ev_data->cookie, value, value_len + 1, ev_data);
+        }
+    } else {
+        //@todo(Travis) check for TE, Transfer-Encoding, Content-Length
+        ;
+    }
+}
 
 #if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
@@ -169,20 +220,8 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     }
 #endif
 
-#if ENABLE_SESSION_TRACKING
-    /* Look for Cookie header field */
-    if (ev_data->type == CLIENT_LISTENER ) {
-        if (COOKIE_HEADER_FIELD_STRLEN == length
-                && strncmp(COOKIE_HEADER_FIELD_NAME, at,
-                COOKIE_HEADER_FIELD_STRLEN) == 0) {
-            log_trace("Found Cookie header\n");
-            ev_data->next_header_value_is_cookie = true;
-        } else if (ev_data->next_header_value_is_cookie) {
-            /* Hit header field after cookie, so don't expect next header value
-             * to be the Cookie */
-            ev_data->next_header_value_is_cookie = false;
-        }
-    }
+#if ENABLE_HEADERS_TRACKING
+    update_http_header_pair(ev_data, true, at, length);
 #endif
 
     return 0;
@@ -204,19 +243,37 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     }
 #endif
 
-#if ENABLE_SESSION_TRACKING
-    /* Store header value */
-    if (ev_data->next_header_value_is_cookie) {
-        if (update_bytearray(ev_data->cookie, at, length, ev_data) < 0) {
-            return -1;
-        }
-    }
+#if ENABLE_HEADERS_TRACKING
+    update_http_header_pair(ev_data, false, at, length);
 #endif
 
     return 0;
 }
 #endif
 
+/* Updates current header field or value.
+ * Inspects previous header once a new header starts. */
+void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
+        const char *at, size_t length) {
+    bytearray_t *ba;
+
+    if (is_header_field) {
+        ba = ev_data->header_field;
+    } else {
+        ba = ev_data->header_value;
+    }
+
+    /* Inspect header if field and value are present. */
+    if (is_header_field && !ev_data->just_visited_header_field
+            && ba->len != 0) {
+        check_header_pair(ev_data);
+        bytearray_clear(ev_data->header_field);
+        bytearray_clear(ev_data->header_value);
+    }
+
+    update_bytearray(ba, at, length, ev_data);
+    ev_data->just_visited_header_field = is_header_field;
+}
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_PARAM_CHECKS
@@ -352,9 +409,16 @@ void free_event_data(struct event_data *ev) {
     if (ev != NULL) {
         bytearray_free(ev->url);
         bytearray_free(ev->body);
+
 #if ENABLE_SESSION_TRACKING
         bytearray_free(ev->cookie);
 #endif
+
+#if ENABLE_HEADERS_TRACKING
+        bytearray_free(ev->header_field);
+        bytearray_free(ev->header_value);
+#endif
+
         free(ev);
     }
 }
@@ -413,18 +477,30 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->send_fd = send_fd;
         ev_data->conn_info = conn_info;
 
-        if ((ev_data->url = new_bytearray()) == NULL) {
+        if ((ev_data->url = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
 
-        if ((ev_data->body = new_bytearray()) == NULL) {
+        if ((ev_data->body = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
 
 #if ENABLE_SESSION_TRACKING
-        if ((ev_data->cookie = new_bytearray()) == NULL) {
+        if ((ev_data->cookie = bytearray_new()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            goto error;
+        }
+#endif
+
+#if ENABLE_HEADERS_TRACKING
+        if ((ev_data->header_field = bytearray_new()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            goto error;
+        }
+
+        if ((ev_data->header_value = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
@@ -439,9 +515,16 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
 error:
     bytearray_free(ev_data->url);
     bytearray_free(ev_data->body);
+
 #if ENABLE_SESSION_TRACKING
     bytearray_free(ev_data->cookie);
 #endif
+
+#if ENABLE_HEADERS_TRACKING
+    bytearray_free(ev_data->header_field);
+    bytearray_free(ev_data->header_value);
+#endif
+
     free(ev_data);
     return NULL;
 }
@@ -908,18 +991,10 @@ int fill_rand_bytes(char *buf, size_t len) {
 /* Find session associated with cookie */
 #if ENABLE_SESSION_TRACKING
 void find_session_from_cookie(struct event_data *ev_data) {
-    log_dbg("Cookie: \"%.*s\"\n", (int) ev_data->cookie->len,
-            ev_data->cookie->data);
-
-    /* NUL terminate bytearray to that C string functions can be used */
-    if (bytearray_append(ev_data->cookie, "\0", 1) < 0) {
-        log_error("bytearray_append failed\n");
-        cancel_connection(ev_data);
-    }
+    /* Cookie should be NUL terminated from check_header_pair(),
+     * so C string functions can be used. */
 
     char *sess_id = extract_sessid_cookie_value(ev_data->cookie->data);
-    log_trace("SESSION_ID: \"%s\"\n", sess_id);
-
     if (sess_id == NULL) {
         log_trace("SESSION_ID not found in HTTP request\n");
         return;
@@ -1093,7 +1168,7 @@ int handle_client_server_event(struct epoll_event *ev) {
     char *newline_loc;
     bytearray_t *first_response_line = NULL;
     if (type == SERVER_LISTENER) {
-        if ((first_response_line = new_bytearray()) == NULL) {
+        if ((first_response_line = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             cancel_connection(ev_data);
             return 1;
@@ -1150,7 +1225,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                     continue;
                 }
                 char *token = sess->session_id;
-                log_dbg("Found SESSION_ID: %s\n", token);
+                log_dbg("Sending SESSION_ID: %s\n", token);
                 int insert_header_len = snprintf(insert_header,
                         sizeof(insert_header),
                         SET_COOKIE_HEADER_FORMAT, token);

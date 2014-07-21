@@ -26,7 +26,7 @@
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
 
-//#define DEBUG
+/* Logging macros */
 #ifdef DEBUG
 #define log_trace(args...) fprintf(stdout, "[trace] " args); fflush(stdout)
 #define log_dbg(args...) fprintf(stdout, "[ dbg ] " args); fflush(stdout)
@@ -34,19 +34,17 @@
 #define log_trace(msg, args...) ;
 #define log_dbg(msg, args...) ;
 #endif
-
 #define log_warn(args...) fprintf(stderr, "[warn ] " args); fflush(stdout)
 #define log_info(args...) fprintf(stderr, "[info ] " args); fflush(stdout)
 #define log_error(args...) fprintf(stderr, "[error] " args); fflush(stdout)
 
-typedef enum {
-    CLIENT_LISTENER, SERVER_LISTENER
-} event_t;
-
-typedef enum {
-    WAITING_FOR_URL, URL_COMPLETE, HEADERS_COMPLETE, MESSAGE_COMPLETE
-} conn_state_t;
-
+/* Computed enable macros */
+#define PAGES_CONF_LEN (sizeof(pages_conf) / sizeof(*pages_conf))
+#define ENABLE_PARAM_CHECKS (ENABLE_PARAM_LEN_CHECK || ENABLE_PARAM_WHITELIST_CHECK)
+#define ENABLE_SESSION_TRACKING (ENABLE_CSRF_PROTECTION)
+#define ENABLE_HEADER_FIELD_CHECK (ENABLE_HEADER_FIELD_LEN_CHECK || ENABLE_SESSION_TRACKING)
+#define ENABLE_HEADER_VALUE_CHECK (ENABLE_HEADER_VALUE_LEN_CHECK || ENABLE_SESSION_TRACKING)
+#define ENABLE_HEADERS_TRACKING ENABLE_SESSION_TRACKING
 
 /* HTTP_REQ_* definitions must be defined in same order as http_parser */
 #define HTTP_REQ_DELETE (1 << 0)
@@ -59,12 +57,12 @@ typedef enum {
 #define HTTP_REQ_TRACE (1 << 7)
 #define NUM_HTTP_REQ_TYPES 8
 
-
 /* Stringification macros */
 /* XSTR will expand a macro value into a string literal. */
 #define XSTR(a) STR(a)
 #define STR(a) #a
 
+/* HTTP macros */
 #define CRLF "\r\n"
 
 #define HTTP_RESPONSE_OK \
@@ -92,6 +90,7 @@ typedef enum {
     "</body>" \
     "</html>"
 
+/* Session macros */
 #define SHIM_SESSID_NAME "SHIM_SESSID"
 #define SHIM_SESSID_NAME_STRLEN (sizeof(SHIM_SESSID_NAME) - 1)
 #define SHIM_SESSID_RAND_BYTES 10
@@ -109,8 +108,15 @@ typedef enum {
 
 #define MAX_HTTP_RESPONSE_FIRST_LINE_LEN 2048
 
-#define COOKIE_HEADER_FIELD_NAME "Cookie"
-#define COOKIE_HEADER_FIELD_STRLEN (sizeof(COOKIE_HEADER_FIELD_NAME) - 1)
+#define COOKIE_HEADER_FIELD "Cookie"
+#define COOKIE_HEADER_FIELD_STRLEN (sizeof(COOKIE_HEADER_FIELD) - 1)
+
+#define TRANSFER_ENCODING_HEADER_FIELD "Transfer-Encoding"
+#define TRANSFER_ENCODING_HEADER_FIELD_STRLEN \
+    (sizeof(TRANSFER_ENCODING_HEADER_FIELD) - 1)
+
+#define TE_HEADER_FIELD "TE"
+#define TE_HEADER_FIELD_STRLEN (sizeof(TE_HEADER_FIELD) - 1)
 
 #define INSERT_HIDDEN_TOKEN_JS \
     "<script>" \
@@ -125,6 +131,18 @@ typedef enum {
     "</script>"
 #define INSERT_HIDDEN_TOKEN_JS_STRLEN (sizeof(INSERT_HIDDEN_TOKEN_JS) - 1)
 
+
+/* Enums */
+
+typedef enum {
+    CLIENT_LISTENER, SERVER_LISTENER
+} event_t;
+
+typedef enum {
+    WAITING_FOR_URL, URL_COMPLETE, HEADERS_COMPLETE, MESSAGE_COMPLETE
+} conn_state_t;
+
+
 /* Structures */
 
 struct connection_info;
@@ -136,16 +154,22 @@ struct event_data {
     struct connection_info *conn_info;
     bytearray_t *url;
     bytearray_t *body;
+
 #if ENABLE_SESSION_TRACKING
     bytearray_t *cookie;
 #endif
+
+#if ENABLE_HEADERS_TRACKING
+    bytearray_t *header_field;
+    bytearray_t *header_value;
+#endif
+
     event_t type : 8;
     bool is_cancelled : 1;
     bool msg_begun : 1;
     bool headers_complete : 1;
     bool msg_complete : 1;
-    bool next_header_value_is_cookie : 1;
-    bool next_header_value_is_content_length : 1;
+    bool just_visited_header_field : 1;
 };
 
 struct session {
@@ -195,6 +219,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
 void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
+void check_header_pair(struct event_data *ev_data);
 
 /* Feature check helpers */
 struct page_conf *find_matching_page(char *url, size_t len);
@@ -217,6 +242,8 @@ void parse_argument_name_value(char *arg, size_t arg_len, char **name,
         size_t *name_len, char **value, size_t *value_len);
 bool str_to_url_encoded_memeq(const char *str, char *url_data,
         size_t url_data_len, struct event_data *ev_data);
+void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
+        const char *at, size_t length);
 
 /* Util functions */
 int http_parser_method_to_shim(enum http_method method);

@@ -1,6 +1,6 @@
 #include "bytearray.h"
 
-bytearray_t* new_bytearray() {
+bytearray_t* bytearray_new() {
     bytearray_t *ba = calloc(1, sizeof(bytearray_t));
     if (ba == NULL) {
         perror("calloc");
@@ -78,4 +78,14 @@ int bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt) {
 
 int bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
     return bytearray_truncate(ba, trunc_amt, 1);
+}
+
+int bytearray_clear(bytearray_t *ba) {
+    if (ba == NULL) {
+        fprintf(stderr, "Tried to truncate null bytearray\n");
+        return -1;
+    }
+
+    ba->len = 0;
+    return 0;
 }
