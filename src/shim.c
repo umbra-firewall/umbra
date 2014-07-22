@@ -8,7 +8,9 @@ size_t error_page_len;
 
 bool sigint_received = false;
 
-int num_conn_infos = 0;// DEBUG
+#ifdef TRACE
+int num_conn_infos = 0;
+#endif
 
 http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
@@ -267,7 +269,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
 
 #if ENABLE_HEADER_FIELD_LEN_CHECK
     if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_FIELD_LEN) {
-        log_info("Blocked request because header field length %ld; "
+        log_info("Blocked request because header field length %zd; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_FIELD_LEN);
         cancel_connection(ev_data);
@@ -291,7 +293,7 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 
 #if ENABLE_HEADER_VALUE_LEN_CHECK
     if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_VALUE_LEN) {
-        log_info("Blocked request because header value length %ld; "
+        log_info("Blocked request because header value length %zd; "
                 "max is %ld\n",
                 length, (long ) MAX_HEADER_VALUE_LEN);
         cancel_connection(ev_data);
@@ -492,7 +494,9 @@ void free_event_data(struct event_data *ev) {
 /* Free memory and close sockets associated with connection structure */
 void free_connection_info(struct connection_info *ci) {
     if (ci != NULL) {
+#ifdef TRACE
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
+#endif
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
             if (listen_fd && close(listen_fd)) {
@@ -509,7 +513,9 @@ void free_connection_info(struct connection_info *ci) {
 
         free(ci);
     } else {
+#ifdef TRACE
         log_trace("Freeing NULL conn info (%d total)\n", num_conn_infos);
+#endif
     }
 }
 
@@ -601,8 +607,9 @@ error:
 struct connection_info *init_conn_info(int infd, int outfd) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
-    num_conn_infos++;
-    log_trace("init_conn_info() (%d total)\n", num_conn_infos);
+#ifdef TRACE
+    log_trace("init_conn_info() (%d total)\n", ++num_conn_infos);
+#endif
 
     conn_info = calloc(1, sizeof(struct connection_info));
     if (conn_info == NULL) {
@@ -626,7 +633,9 @@ struct connection_info *init_conn_info(int infd, int outfd) {
     return conn_info;
 
 fail:
+#ifdef TRACE
     num_conn_infos--;
+#endif
     free(client_ev_data);
     free(server_ev_data);
     free(conn_info);
@@ -884,17 +893,17 @@ void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data) {
     size_t url_decode_len = url_encode_buf_len_whitelist(value, value_len,
             ev_data, param->whitelist);
-    log_dbg("  decode_len=%ld\n", url_decode_len);
+    log_dbg("  decode_len=%zd\n", url_decode_len);
     if (url_decode_len > param->max_param_len) {
-        log_warn("Length of parameter value \"%.*s\" %ld exceeds max %d\n",
-                (int ) value_len, value, url_decode_len, param->max_param_len);
+        log_warn("Length of parameter value \"%.*s\" %zd exceeds max %d\n",
+                (int) value_len, value, url_decode_len, param->max_param_len);
         cancel_connection(ev_data);
     }
 }
 
 /* Perform argument specific checks */
 void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
-    log_dbg("arg=\"%.*s\", len=%ld\n", (int) len, arg, len);
+    log_dbg("arg=\"%.*s\", len=%zd\n", (int) len, arg, len);
 
     if (len < 0) {
         log_warn("Malformed argument\n");
@@ -906,7 +915,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
 
     parse_argument_name_value(arg, len, &name, &name_len, &value, &value_len);
 
-    log_dbg("  name=\"%.*s\" len=%ld, value=\"%.*s\" len=%ld\n", (int) name_len,
+    log_dbg("  name=\"%.*s\" len=%zd, value=\"%.*s\" len=%zd\n", (int) name_len,
             name, name_len, (int) value_len, value, value_len);
 
     struct page_conf *page_match = ev_data->conn_info->page_match;
@@ -981,7 +990,7 @@ void check_buffer_params(bytearray_t *buf, bool is_url_param,
         log_trace("Empty query\n");
     }
 
-    log_dbg("query: \"%.*s\", len=%ld\n", (int) query_len, query, query_len);
+    log_dbg("query: \"%.*s\", len=%zd\n", (int) query_len, query, query_len);
 
     /* Examine each query parameter */
     char *next = memchr(query, '&', query_len);
@@ -1098,7 +1107,7 @@ void find_session_from_cookie(struct event_data *ev_data) {
 
     size_t sess_id_len = strlen(sess_id);
     if (sess_id_len != SHIM_SESSID_LEN) {
-        log_warn("Found SESSION_ID with length %ld instead of expected %d\n",
+        log_warn("Found SESSION_ID with length %zd instead of expected %d\n",
                 sess_id_len, SHIM_SESSID_LEN);
         cancel_connection(ev_data);
     }
@@ -1445,8 +1454,9 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
     int s;
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
             buf, len);
+    (void) nparsed; // Avoid unused variable compiler warning
 
-    log_trace("Parsed %ld / %ld bytes\n", nparsed, len);
+    log_trace("Parsed %zd / %zd bytes\n", nparsed, len);
 
     if (ev_data->parser.upgrade) {
         /* Wants to upgrade connection */
@@ -1500,7 +1510,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
 
             /* Read original value */
             size_t old_len;
-            if (sscanf(buf, "%ld\n", &old_len) != 1) {
+            if (sscanf(buf, "%zd\n", &old_len) != 1) {
                 log_error("Could not read Content-Length value: %.*s\n",
                         (int) ev_data->content_len_value_len, buf);
                 cancel_connection(ev_data);
@@ -1511,7 +1521,7 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
             size_t new_len = old_len + INSERT_HIDDEN_TOKEN_JS_STRLEN;
             char new_len_buf[ev_data->content_len_value_len + 10];
             int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
-                    "%ld", new_len);
+                    "%zd", new_len);
             if (new_len_buf_len < 0) {
                 log_error("Could not write new calculated Content-Length "
                         "to buffer\n");
