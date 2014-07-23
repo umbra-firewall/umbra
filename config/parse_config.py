@@ -809,11 +809,18 @@ toplevel_conf = MultiOption('toplevel', {
                        defaultConf=default_page_conf)
         }, set(), nameVisitOrder=['default_page_config', 'global_config', 'page_config'])
 
+def comments_removed_read(f):
+    ret_lines = []
+    for l in f.readlines():
+        if not re.match(r"\s*#", l):
+            ret_lines.append(l)
+    return ''.join(ret_lines)
 
 def parse_config(config_file):
     print 'Parsing config file "%s"' % config_file
     with open(config_file, 'r') as f:
-        conf = json.load(f)
+        conf_str = comments_removed_read(f)
+        conf = json.loads(conf_str)
         toplevel_conf.setValue(conf)
     toplevel_conf.validate()
     return toplevel_conf

@@ -123,8 +123,8 @@ int main(int argc, char **argv) {
     print_str_macro(HTTPS_PRIVATE_KEY);
     print_str_macro(HTTPS_CERTIFICATE);
     print_int_macro(MAX_HEADER_FIELD_LEN);
-    print_str_arr(successful_login_pages);
     print_int_macro(MAX_HEADER_VALUE_LEN);
+    print_str_arr(successful_login_pages);
     print_int_macro(MAX_NUM_SESSIONS);
     print_int_macro(SESSION_LIFE_SECONDS);
 
