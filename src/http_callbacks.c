@@ -50,13 +50,26 @@ int on_message_complete_cb(http_parser *p) {
 #endif
 
 #if ENABLE_CSRF_PROTECTION
+    struct page_conf *page_match = ev_data->conn_info->page_match;
     if (ev_data->type == CLIENT_LISTENER
-            && ev_data->conn_info->page_match->receives_csrf_form_action
+            && page_match->receives_csrf_form_action
             && !ev_data->found_csrf_correct_token) {
-        log_warn("Page configured to receive CSRF form action, but no CSRF "
-                "token parameter found\n");
-        cancel_connection(ev_data);
-        return -1;
+        bool post_allowed = !ENABLE_REQUEST_TYPE_CHECK
+                || (page_match->request_types & HTTP_REQ_POST);
+        bool get_allowed = !ENABLE_REQUEST_TYPE_CHECK
+                || (page_match->request_types & HTTP_REQ_GET);
+        bool is_self_ref = page_match->has_csrf_form
+                && page_match->receives_csrf_form_action;
+        bool ignore_self_ref = is_self_ref && post_allowed && get_allowed
+                && p->method == HTTP_GET;
+        if (ignore_self_ref) {
+            log_trace("Skipping CSRF check because self-referencing form\n");
+        } else {
+            log_warn("Page configured to receive CSRF form action, but no CSRF "
+                    "token parameter found\n");
+            cancel_connection(ev_data);
+            return -1;
+        }
     }
 #endif
 
