@@ -634,18 +634,11 @@ int handle_client_server_event(struct epoll_event *ev) {
     char buf[READ_BUF_SIZE];
 
     struct event_data *ev_data = (struct event_data *) ev->data.ptr;
+    ev_data->got_eagain = false; // Reset on each handle call
     event_t type = ev_data->type;
 
 #if ENABLE_SESSION_TRACKING
-    /* Cache first response to find where headers begin */
-    bytearray_t *headers_cache = NULL;
-    if (type == SERVER_LISTENER) {
-        if ((headers_cache = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            cancel_connection(ev_data);
-            return 1;
-        }
-    }
+    bytearray_t *headers_cache = ev_data->headers_cache;
 #endif
 
     log_trace("*****HANDLING EVENT TYPE %s*****\n",
@@ -658,15 +651,23 @@ int handle_client_server_event(struct epoll_event *ev) {
         parser_settings = &server_parser_settings;
     }
 
+    /* Read into buffer */
     while (!done) {
-        count = read(ev_data->listen_fd, buf,
-                READ_BUF_SIZE);
+        count = read(ev_data->listen_fd, buf, READ_BUF_SIZE);
         if (count == -1) {
+            log_dbg("    read=%zd, errno=%d\n", count, errno);
             /* If errno == EAGAIN, that means we have read all
-             data. So go back to the main loop. */
-            if (errno != EAGAIN) {
-                perror("read");
+             data for now. So go back to the main loop. */
+            if (errno == EAGAIN) {
+                log_dbg("Got EAGAIN on read\n");
+                ev_data->got_eagain = true;
                 done = 1;
+                break;
+            } else {
+                perror("read");
+                cancel_connection(ev_data);
+                done = 1;
+                break;
             }
             break;
         } else if (count == 0) {
@@ -696,14 +697,15 @@ int handle_client_server_event(struct epoll_event *ev) {
 
             if (strstr(headers_cache->data, "\r\n\r\n")
                     || strstr(headers_cache->data, "\n\n")) {
-                /* Have all headers in buffer, so if Content-Length is specified,
-                 * then it is in the buffer. */
+                /* Have all headers in buffer, so if Content-Length is
+                 * specified, then it is in the buffer. */
 
                 char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
                 int insert_header_len = populate_set_cookie_header(
                         insert_header, sizeof(insert_header), ev_data);
                 if (insert_header_len < 0) {
                     done = 1;
+                    cancel_connection(ev_data);
                     break;
                 }
 
@@ -714,12 +716,16 @@ int handle_client_server_event(struct epoll_event *ev) {
                         headers_cache->len, ev_data, parser_settings,
                         insert_header, insert_header_len, insert_offset);
 
+                /* Done with the headers cache */
                 bytearray_free(headers_cache);
                 headers_cache = NULL;
+                ev_data->headers_cache = NULL;
                 continue;
             }
 
-            /* Check if location found yet */
+            /* Do not have all headers yet */
+
+            /* Check if headers are too large */
             if (headers_cache->len > MAX_HTTP_RESPONSE_HEADERS_SIZE) {
                 log_warn("End of Headers not found after %d bytes into "
                         "response; ""aborting\n",
@@ -738,18 +744,13 @@ int handle_client_server_event(struct epoll_event *ev) {
                 0, 0);
     }
 
-#if ENABLE_SESSION_TRACKING
-    if (headers_cache) {
-        bytearray_free(headers_cache);
-    }
-#endif
-
 
 #if ENABLE_CSRF_PROTECTION
     /* Send CSRF token JavaScript snippet */
     if (type == SERVER_LISTENER) {
         log_dbg("Checking if page has CSRF protection\n");
-        if (!is_conn_cancelled(ev_data) && ev_data->conn_info->page_match
+        if (!is_conn_cancelled(ev_data) && !ev_data->got_eagain
+                && ev_data->conn_info->page_match
                 && ev_data->conn_info->page_match->has_csrf_form) {
             log_trace("Page has CSRF protected form; sending JS snippet\n");
             int s;
@@ -934,7 +935,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
             done = 1;
         }
 
-        if (done) {
+        if (is_conn_cancelled(ev_data) || (done && !ev_data->got_eagain)) {
             free_connection_info(ev_data->conn_info);
             ev->data.ptr = NULL;
         }

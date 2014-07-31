@@ -79,6 +79,8 @@ int on_message_complete_cb(http_parser *p) {
 int on_url_cb(http_parser *p, const char *at, size_t length) {
     struct event_data *ev_data = (struct event_data *) p->data;
 
+    log_trace("Method: %s\n", http_method_str(p->method));
+
     if (update_bytearray(ev_data->url, at, length, ev_data) < 0) {
         return -1;
     }

@@ -69,6 +69,11 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
+
+        if ((ev_data->headers_cache = bytearray_new()) == NULL) {
+            log_warn("Allocating new bytearray failed\n");
+            goto error;
+        }
 #endif
 
 #if ENABLE_HEADERS_TRACKING
@@ -97,6 +102,7 @@ error:
 
 #if ENABLE_SESSION_TRACKING
     bytearray_free(ev_data->cookie);
+    bytearray_free(ev_data->headers_cache);
 #endif
 
 #if ENABLE_HEADERS_TRACKING
@@ -117,6 +123,7 @@ void free_event_data(struct event_data *ev) {
 
 #if ENABLE_SESSION_TRACKING
         bytearray_free(ev->cookie);
+        bytearray_free(ev->headers_cache);
 #endif
 
 #if ENABLE_HEADERS_TRACKING

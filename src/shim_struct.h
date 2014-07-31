@@ -31,6 +31,7 @@ struct event_data {
 
 #if ENABLE_SESSION_TRACKING
     bytearray_t *cookie;
+    bytearray_t *headers_cache;
     const char *content_len_value;
     size_t content_len_value_len;
 #endif
@@ -48,6 +49,7 @@ struct event_data {
     bool headers_complete : 1;
     bool msg_complete : 1;
     bool just_visited_header_field : 1;
+    bool got_eagain : 1;
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;

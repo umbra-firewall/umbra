@@ -173,7 +173,8 @@ int get_num_active_sessions() {
     return num_sessions;
 }
 
-/* Writes Set-Cookie header to buf */
+/* Writes Set-Cookie header to buf. Returns the length of the cookie header
+ * on success, -1 otherwise. */
 int populate_set_cookie_header(char *buf, size_t buf_len,
         struct event_data *ev_data) {
     struct session *sess = get_conn_session(ev_data->conn_info);
