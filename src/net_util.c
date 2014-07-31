@@ -131,6 +131,7 @@ int sendall(int sockfd, const void *buf, size_t len) {
         sent_bytes = send(sockfd, buf, len, 0);
         if (sent_bytes < 0) {
             if (errno == EAGAIN) {
+                log_dbg("Got EAGAIN during sendall; retrying\n");
                 continue;
             }
             perror("send");

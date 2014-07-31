@@ -47,7 +47,7 @@
 #define CSRF_TOKEN_NAME_LEN (sizeof(CSRF_TOKEN_NAME) - 1)
 
 #define INSERT_HIDDEN_TOKEN_JS_FORMAT \
-    "<script>" \
+    "\n<script>" \
     "var input = document.createElement(\"input\");" \
     "input.setAttribute(\"type\", \"hidden\");" \
     "input.setAttribute(\"name\", \"" CSRF_TOKEN_NAME "\");" \
@@ -56,7 +56,7 @@
     "for (var i = 0, length = forms.length; i < length; i ++) {" \
     "  forms[i].appendChild(input);" \
     "}" \
-    "</script>"
+    "</script>\n"
 #define INSERT_HIDDEN_TOKEN_JS_STRLEN \
     (sizeof(INSERT_HIDDEN_TOKEN_JS_FORMAT) + SHIM_SESSID_LEN - 3)
 

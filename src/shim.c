@@ -216,7 +216,7 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
 /* Handle a new incoming connection */
 int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     int s;
-    struct epoll_event client_event, server_event;
+    struct epoll_event client_event = {0}, server_event = {0};
     struct connection_info *conn_info;
 
     while (1) {
