@@ -84,6 +84,7 @@ struct session *new_session() {
     log_trace("Creating new session\n");
 
     struct session *sess = NULL;
+    struct session *oldest_sess = NULL;
     int i;
 
     /* Find first free entry */
@@ -91,12 +92,23 @@ struct session *new_session() {
         if (is_session_entry_clear(&current_sessions[i])) {
             sess = &current_sessions[i];
             break;
+        } else if (oldest_sess == NULL
+                || oldest_sess->expires_at > current_sessions[i].expires_at) {
+            /* Keep track of oldest session, in case the session table is
+             * full */
+            oldest_sess = &current_sessions[i];
         }
     }
 
     /* No free entry found */
     if (sess == NULL) {
-        return NULL;
+        if (oldest_sess == NULL) {
+            log_warn("Could not find oldests session to evict\n");
+            return NULL;
+        }
+        log_trace("Evicting oldest session %s\n", oldest_sess->session_id);
+        clear_session(oldest_sess);
+        sess = oldest_sess;
     }
 
     sess->expires_at = next_session_expiration_time;
