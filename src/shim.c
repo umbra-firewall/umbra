@@ -646,7 +646,11 @@ int flush_server_event(struct event_data *server_ev_data) {
             return -1;
         }
     }
+
+#if ENABLE_CSRF_PROTECTION
     check_send_csrf_js_snippet(server_ev_data);
+#endif
+
     reset_connection_info(server_ev_data->conn_info);
     return 0;
 }
