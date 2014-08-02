@@ -635,8 +635,13 @@ int flush_server_event(struct event_data *server_ev_data) {
         /* Finish parsing if it has not already completed */
         size_t nparsed = http_parser_execute(&server_ev_data->parser,
                 &server_parser_settings, NULL, 0);
-        if (nparsed < 0) {
+        (void) nparsed; // Suppress unused variable warning
+
+        enum http_errno hte = HTTP_PARSER_ERRNO(&server_ev_data->parser);
+        if (hte != HPE_OK) {
             log_warn("Error during HTTP parsing\n");
+            log_warn("%s: %s\n", http_errno_name(hte),
+                    http_errno_description(hte));
             cancel_connection(server_ev_data);
             return -1;
         }
@@ -844,9 +849,12 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
     int s;
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
             buf, len);
+    (void) nparsed; // Suppress unused variable warning
 
-    if (nparsed < 0) {
+    enum http_errno hte = HTTP_PARSER_ERRNO(&ev_data->parser);
+    if (hte != HPE_OK) {
         log_warn("Error during HTTP parsing\n");
+        log_warn("%s: %s\n", http_errno_name(hte), http_errno_description(hte));
         cancel_connection(ev_data);
         return 1;
     }
