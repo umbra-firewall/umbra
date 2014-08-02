@@ -114,6 +114,63 @@ error:
     return NULL;
 }
 
+/* Reset state of event_data structure. This should return its state after being
+ * initialized with the exception of bytearrays, which should just be
+ * cleared. */
+void reset_event_data(struct event_data *ev) {
+    if (ev == NULL) {
+        log_warn("Tried to reset NULL event_data\n");
+    }
+
+    bytearray_clear(ev->url);
+    bytearray_clear(ev->body);
+
+#if ENABLE_SESSION_TRACKING
+    bytearray_clear(ev->cookie);
+    bytearray_clear(ev->headers_cache);
+    ev->content_len_value = NULL;
+    ev->content_len_value_len = 0;
+#endif
+
+#if ENABLE_HEADERS_TRACKING
+    bytearray_clear(ev->header_field);
+    bytearray_clear(ev->header_value);
+    ev->header_value_loc = NULL;
+    ev->header_field_loc = NULL;
+#endif
+
+    ev->is_cancelled = false;
+    ev->msg_begun = false;
+    ev->headers_complete = false;
+    ev->msg_complete = false;
+    ev->just_visited_header_field = false;
+    ev->got_eagain = false;
+    ev->sent_js_snippet = false;
+
+#if ENABLE_SESSION_TRACKING
+    ev->content_length_specified = false;
+#endif
+
+#if ENABLE_CSRF_PROTECTION
+    ev->found_csrf_correct_token = false;
+#endif
+}
+
+/* Reset state of connection structure (including its event_data structures) */
+void reset_connection_info(struct connection_info *ci) {
+    log_trace("Resseting connection info of %p\n", ci);
+
+    if (ci == NULL) {
+        return;
+    }
+
+    ci->session = NULL;
+    ci->page_match = NULL;
+
+    reset_event_data(ci->client_ev_data);
+    reset_event_data(ci->server_ev_data);
+}
+
 /* Free memory associated with event data */
 void free_event_data(struct event_data *ev) {
     //log_trace("Freeing event data %p\n", ev);

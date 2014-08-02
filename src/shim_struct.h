@@ -50,6 +50,7 @@ struct event_data {
     bool msg_complete : 1;
     bool just_visited_header_field : 1;
     bool got_eagain : 1;
+    bool sent_js_snippet : 1;
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
@@ -73,6 +74,8 @@ struct connection_info {
 struct connection_info *init_conn_info(int infd, int outfd);
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         enum http_parser_type parser_type, struct connection_info *conn_info);
+void reset_event_data(struct event_data *ev);
+void reset_connection_info(struct connection_info *ci);
 void free_event_data(struct event_data *ev);
 void free_connection_info(struct connection_info *ci);
 void copy_default_params(struct page_conf *page_conf, struct params *params);

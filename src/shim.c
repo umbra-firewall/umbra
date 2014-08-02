@@ -626,6 +626,26 @@ void do_client_header_complete_checks(struct event_data *ev_data) {
 #endif
 }
 
+/* Finishes server event if it was not finished previously. Returns 0 on
+ * success, -1 otherwise. */
+int flush_server_event(struct event_data *server_ev_data) {
+    log_trace("Got request on socket that has already processed a response;"
+                    " Finishing parsing and clearing connection info\n");
+    if (!server_ev_data->msg_complete) {
+        /* Finish parsing if it has not already completed */
+        size_t nparsed = http_parser_execute(&server_ev_data->parser,
+                &server_parser_settings, NULL, 0);
+        if (nparsed < 0) {
+            log_warn("Error during HTTP parsing\n");
+            cancel_connection(server_ev_data);
+            return -1;
+        }
+    }
+    check_send_csrf_js_snippet(server_ev_data);
+    reset_connection_info(server_ev_data->conn_info);
+    return 0;
+}
+
 /* Handles incoming client requests.
  * Returns boolean indicated if connection is done */
 int handle_client_server_event(struct epoll_event *ev) {
@@ -640,6 +660,20 @@ int handle_client_server_event(struct epoll_event *ev) {
 #if ENABLE_SESSION_TRACKING
     bytearray_t *headers_cache = ev_data->headers_cache;
 #endif
+
+    /* Reset conn info if already processed a response */
+    if (type == CLIENT_LISTENER
+            && ev_data->conn_info->server_ev_data->msg_begun) {
+        struct event_data *server_ev_data = ev_data->conn_info->server_ev_data;
+
+        /* Ensure that JS snippet is sent, regardless of eagain having
+         * occurred */
+        server_ev_data->got_eagain = false;
+
+        if (flush_server_event(server_ev_data) < 0) {
+            goto check_cancelled;
+        }
+    }
 
     log_trace("*****HANDLING EVENT TYPE %s*****\n",
             type == CLIENT_LISTENER ? "REQUEST" : "RESPONSE");
@@ -748,31 +782,11 @@ int handle_client_server_event(struct epoll_event *ev) {
 #if ENABLE_CSRF_PROTECTION
     /* Send CSRF token JavaScript snippet */
     if (type == SERVER_LISTENER) {
-        log_dbg("Checking if page has CSRF protection\n");
-        if (!is_conn_cancelled(ev_data) && !ev_data->got_eagain
-                && ev_data->conn_info->page_match
-                && ev_data->conn_info->page_match->has_csrf_form) {
-            log_trace("Page has CSRF protected form; sending JS snippet\n");
-            int s;
-            char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
-            int snippet_len = snprintf(js_snippet, sizeof(js_snippet),
-                    INSERT_HIDDEN_TOKEN_JS_FORMAT,
-                    ev_data->conn_info->session->session_id);
-            if (snippet_len < 0) {
-                perror("snprintf");
-                cancel_connection(ev_data);
-                done = 1;
-            }
-            s = sendall(ev_data->send_fd, js_snippet, snippet_len);
-            if (s < 0) {
-                log_error("sendall failed\n");
-                cancel_connection(ev_data);
-                done = 1;
-            }
-        }
+        done |= check_send_csrf_js_snippet(ev_data);
     }
 #endif
 
+check_cancelled:
     if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
         if (send_error_page(ev_data->listen_fd)) {
             log_info("Failed to send error page.\n");
@@ -788,6 +802,40 @@ int handle_client_server_event(struct epoll_event *ev) {
     return done;
 }
 
+#if ENABLE_CSRF_PROTECTION
+/* Sends CSRF JS snippet if page is configured for it */
+int check_send_csrf_js_snippet(struct event_data *ev_data) {
+    int done = 0;
+    log_dbg("Checking if page has CSRF protection\n");
+    if (!is_conn_cancelled(ev_data) && !ev_data->got_eagain
+            && ev_data->msg_complete && ev_data->conn_info->page_match
+            && ev_data->conn_info->page_match->has_csrf_form
+            && !ev_data->sent_js_snippet) {
+        log_trace("Page has CSRF protected form; sending JS snippet\n");
+        int s;
+        char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
+        int snippet_len = snprintf(js_snippet, sizeof(js_snippet),
+                INSERT_HIDDEN_TOKEN_JS_FORMAT,
+                ev_data->conn_info->session->session_id);
+        if (snippet_len < 0) {
+            perror("snprintf");
+            cancel_connection(ev_data);
+            done = 1;
+        }
+        s = sendall(ev_data->send_fd, js_snippet, snippet_len);
+        if (s < 0) {
+            log_error("sendall failed\n");
+            cancel_connection(ev_data);
+            done = 1;
+        }
+        ev_data->sent_js_snippet = true;
+    } else {
+        log_dbg("Not sending JS snippet\n");
+    }
+    return done;
+}
+#endif
+
 /* Parse http buffer and run checks. If insert_header is not NULL, it is sent
  * at insert_offset. Returns done sending on socket. */
 int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
@@ -796,7 +844,12 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
     int s;
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
             buf, len);
-    (void) nparsed; // Avoid unused variable compiler warning
+
+    if (nparsed < 0) {
+        log_warn("Error during HTTP parsing\n");
+        cancel_connection(ev_data);
+        return 1;
+    }
 
     log_trace("Parsed %zd / %zd bytes\n", nparsed, len);
 
@@ -973,8 +1026,9 @@ int main(int argc, char *argv[]) {
     memset(&event, 0, sizeof(struct epoll_event));
 
     if (argc != 3 && argc != 4) {
-        log_error("Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n", argv[0]);
-        log_error("Shim %s\n", SHIM_VERSION);
+        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n",
+                argv[0]);
+        fprintf(stderr, "Shim %s\n", SHIM_VERSION);
         exit(EXIT_FAILURE);
     }
 

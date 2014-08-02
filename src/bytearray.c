@@ -97,7 +97,7 @@ int bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
 
 int bytearray_clear(bytearray_t *ba) {
     if (ba == NULL) {
-        fprintf(stderr, "Tried to truncate NULL bytearray\n");
+        fprintf(stderr, "Tried to clear NULL bytearray\n");
         return -1;
     }
 

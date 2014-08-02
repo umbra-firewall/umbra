@@ -77,6 +77,8 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length);
 int populate_set_cookie_header(char *buf, size_t buf_len,
         struct event_data *ev_data);
+int check_send_csrf_js_snippet(struct event_data *ev_data);
+int flush_server_event(struct event_data *server_ev_data);
 
 /* Util functions */
 bool is_hex_digit(char c);

@@ -5,6 +5,8 @@
 
 int on_message_begin_cb(http_parser *p) {
     log_trace("***MESSAGE BEGIN***\n");
+    struct event_data *ev_data = (struct event_data *) p->data;
+    ev_data->msg_begun = true;
     return 0;
 }
 
@@ -18,13 +20,8 @@ int on_headers_complete_cb(http_parser *p) {
         check_header_pair(ev_data);
 
         /* We are done with tracking headers */
-        bytearray_free(ev_data->header_field);
-        bytearray_free(ev_data->header_value);
-
-        /* Set pointers to NULL to make sure they are not
-         * free'd during cleanup */
-        ev_data->header_field = NULL;
-        ev_data->header_value = NULL;
+        bytearray_clear(ev_data->header_field);
+        bytearray_clear(ev_data->header_value);
     }
 #endif
 
