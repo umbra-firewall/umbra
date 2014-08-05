@@ -602,11 +602,13 @@ int fill_rand_bytes(char *buf, size_t len) {
 
 /* Do checks that are possible after the header is received */
 void do_client_header_complete_checks(struct event_data *ev_data) {
-    ev_data->conn_info->page_match = url_find_matching_page((char *) ev_data->url->data,
+    ev_data->conn_info->page_match = url_find_matching_page(
+            (char *) ev_data->url->data,
             ev_data->url->len);
     log_trace("page_match=\"%s\"\n", ev_data->conn_info->page_match->name);
 
-    copy_default_params(ev_data->conn_info->page_match, &ev_data->conn_info->default_params);
+    copy_default_params(ev_data->conn_info->page_match,
+            &ev_data->conn_info->default_params);
 
 #if ENABLE_REQUEST_TYPE_CHECK
     check_request_type(ev_data);
@@ -1123,7 +1125,8 @@ int main(int argc, char *argv[]) {
         }
 
 #if ENABLE_SESSION_TRACKING
-        log_trace("Now tracking %d active sessions\n", get_num_active_sessions());
+        log_trace("Now tracking %d active sessions\n",
+                get_num_active_sessions());
 #endif
     }
 
