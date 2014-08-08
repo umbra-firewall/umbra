@@ -17,6 +17,7 @@
 #include "bytearray.h"
 #include "session.h"
 #include "shim_struct.h"
+#include "struct_array.h"
 #include "config.h"
 
 

@@ -14,6 +14,10 @@ int on_headers_complete_cb(http_parser *p) {
     struct event_data *ev_data = (struct event_data *) p->data;
     ev_data->headers_complete = true;
 
+    if (is_conn_cancelled(ev_data)) {
+        return -1;
+    }
+
 #if ENABLE_HEADERS_TRACKING
     /* Check last header pair */
     if (ev_data->header_field->len != 0) {
@@ -23,12 +27,36 @@ int on_headers_complete_cb(http_parser *p) {
         bytearray_clear(ev_data->header_field);
         bytearray_clear(ev_data->header_value);
     }
+
+    if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
+        log_dbg("Number of header fields (%zd) does not match number of "
+                "header values (%zd)\n", ev_data->all_header_fields->len,
+                ev_data->all_header_values->len);
+        cancel_connection(ev_data);
+        return -1;
+    }
+
+#if DEBUG
+    /* Print header pairs saved in struct_array */
+    int i;
+    size_t len = ev_data->all_header_fields->len;
+    log_dbg("All HTTP Headers:\n");
+    for (i = 0; i < len; i++) {
+        log_dbg("  %s: %s\n", ev_data->all_header_fields->data[i]->data,
+                ev_data->all_header_values->data[i]->data);
+    }
+#endif
+
 #endif
 
     log_trace("***HEADERS COMPLETE***\n");
 
     if (ev_data->type == CLIENT_LISTENER) {
         do_client_header_complete_checks(ev_data);
+    }
+
+    if (is_conn_cancelled(ev_data)) {
+        return -1;
     }
 
     return 0;
@@ -70,6 +98,10 @@ int on_message_complete_cb(http_parser *p) {
     }
 #endif
 
+    if (is_conn_cancelled(ev_data)) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -110,6 +142,10 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     update_http_header_pair(ev_data, true, at, length);
 #endif
 
+    if (is_conn_cancelled(ev_data)) {
+        return -1;
+    }
+
     return 0;
 }
 #endif
@@ -133,6 +169,10 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_HEADERS_TRACKING
     update_http_header_pair(ev_data, false, at, length);
 #endif
+
+    if (is_conn_cancelled(ev_data)) {
+        return -1;
+    }
 
     return 0;
 }

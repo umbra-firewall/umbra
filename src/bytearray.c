@@ -1,3 +1,4 @@
+#include "log.h"
 #include "bytearray.h"
 
 bytearray_t* bytearray_new() {
@@ -13,6 +14,7 @@ bytearray_t* bytearray_new() {
         perror("calloc");
         return NULL;
     }
+
     ba->len = 0;
     ba->_alloc_len = DEFAULT_BYTEARRAY_ALLOC;
 
@@ -32,7 +34,7 @@ int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
     char *new_data;
 
     if (ba == NULL) {
-        fprintf(stderr, "Tried to append NULL bytearray\n");
+        log_warn("Tried to append NULL bytearray\n");
         return -1;
     }
 
@@ -56,7 +58,7 @@ int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
 int bytearray_nul_terminate(bytearray_t *ba) {
     int rc = 0;
     if (ba == NULL) {
-        fprintf(stderr, "Tried to NUL terminate NULL bytearray\n");
+        log_error("Tried to NUL terminate NULL bytearray\n");
         return -1;
     }
 
@@ -71,11 +73,11 @@ int bytearray_nul_terminate(bytearray_t *ba) {
 
 static int bytearray_truncate(bytearray_t *ba, size_t trunc_amt, int from_back) {
     if (ba == NULL) {
-        fprintf(stderr, "Tried to truncate NULL bytearray\n");
+        log_error("Tried to truncate NULL bytearray\n");
         return -1;
     }
     if (trunc_amt > ba->len) {
-        fprintf(stderr, "Tried to truncate bytearray by more than size\n");
+        log_error("Tried to truncate bytearray by more than size\n");
         return -1;
     }
 
@@ -97,7 +99,7 @@ int bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt) {
 
 int bytearray_clear(bytearray_t *ba) {
     if (ba == NULL) {
-        fprintf(stderr, "Tried to clear NULL bytearray\n");
+        log_error("Tried to clear NULL bytearray\n");
         return -1;
     }
 

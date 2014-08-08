@@ -12,10 +12,6 @@ char *http_port_str, *server_http_port_str;
 
 bool sigint_received = false;
 
-#ifdef TRACE
-int num_conn_infos = 0;
-#endif
-
 http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
     .on_url = on_url_cb,
@@ -184,6 +180,7 @@ void check_header_pair(struct event_data *ev_data) {
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length) {
     bytearray_t *ba;
+    int rc;
 
     if (is_header_field) {
         ba = ev_data->header_field;
@@ -203,8 +200,37 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
     if (is_header_field && !ev_data->just_visited_header_field
             && ba->len != 0) {
         check_header_pair(ev_data);
-        bytearray_clear(ev_data->header_field);
-        bytearray_clear(ev_data->header_value);
+
+
+        /* Add header field and value to list of all header pairs */
+        rc = struct_array_add(ev_data->all_header_fields, ev_data->header_field);
+        if (rc < 0) {
+            log_warn("header_fields append failed\n");
+            cancel_connection(ev_data);
+            return;
+        }
+        ev_data->header_field = NULL;
+
+        rc = struct_array_add(ev_data->all_header_values, ev_data->header_value);
+        if (rc < 0) {
+            log_warn("header_values append failed\n");
+            cancel_connection(ev_data);
+            return;
+        }
+        ev_data->header_value = NULL;
+
+
+        ev_data->header_field = bytearray_new();
+        if (ev_data->header_field == NULL) {
+            cancel_connection(ev_data);
+            return;
+        }
+
+        ev_data->header_value = bytearray_new();
+        if (ev_data->header_field == NULL) {
+            cancel_connection(ev_data);
+            return;
+        }
     }
 
     update_bytearray(ba, at, length, ev_data);
@@ -639,6 +665,10 @@ int flush_server_event(struct event_data *server_ev_data) {
                 &server_parser_settings, NULL, 0);
         (void) nparsed; // Suppress unused variable warning
 
+        if (is_conn_cancelled(server_ev_data)) {
+            return -1;
+        }
+
         enum http_errno hte = HTTP_PARSER_ERRNO(&server_ev_data->parser);
         if (hte != HPE_OK) {
             log_warn("Error during HTTP parsing\n");
@@ -856,6 +886,10 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
             buf, len);
     (void) nparsed; // Suppress unused variable warning
+
+    if (is_conn_cancelled(ev_data)) {
+        return 1;
+    }
 
     enum http_errno hte = HTTP_PARSER_ERRNO(&ev_data->parser);
     if (hte != HPE_OK) {

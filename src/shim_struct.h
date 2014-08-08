@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "bytearray.h"
+#include "struct_array.h"
 #include "shim.h"
 #include "config.h"
 
@@ -41,6 +42,8 @@ struct event_data {
     bytearray_t *header_value;
     const char *header_value_loc;
     const char *header_field_loc;
+    struct_array_t *all_header_fields;
+    struct_array_t *all_header_values;
 #endif
 
     event_t type : 8;

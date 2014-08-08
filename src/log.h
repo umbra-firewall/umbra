@@ -8,6 +8,7 @@
 #ifdef DEBUG
 #define log_trace(args...) fprintf(stdout, "[trace] " args); fflush(stdout)
 #define log_dbg(args...) fprintf(stdout, "[ dbg ] " args); fflush(stdout)
+#define TRACE
 #else
 #define log_trace(msg, args...) ;
 #define log_dbg(msg, args...) ;

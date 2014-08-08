@@ -2,14 +2,15 @@
 #include "log.h"
 #include "shim_struct.h"
 
+#ifdef TRACE
+int num_conn_infos = 0;
+#endif
 
 /* Initialize connection_info structure */
 struct connection_info *init_conn_info(int infd, int outfd) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
-#ifdef TRACE
     log_trace("init_conn_info() (%d total)\n", ++num_conn_infos);
-#endif
 
     conn_info = calloc(1, sizeof(struct connection_info));
     if (conn_info == NULL) {
@@ -46,6 +47,7 @@ fail:
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         enum http_parser_type parser_type, struct connection_info *conn_info) {
 
+    log_trace("Initializing new event_data\n");
     struct event_data *ev_data = calloc(1, sizeof(struct event_data));
 
     if (ev_data != NULL) {
@@ -88,6 +90,16 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         }
 
         ev_data->header_value_loc = NULL;
+        ev_data->header_field_loc = NULL;
+
+
+        if ((ev_data->all_header_fields = struct_array_new()) == NULL) {
+            goto error;
+        }
+
+        if ((ev_data->all_header_values = struct_array_new()) == NULL) {
+            goto error;
+        }
 #endif
 
         http_parser_init(&ev_data->parser, parser_type);
@@ -108,6 +120,9 @@ error:
 #if ENABLE_HEADERS_TRACKING
     bytearray_free(ev_data->header_field);
     bytearray_free(ev_data->header_value);
+
+    struct_array_free(ev_data->all_header_fields, true);
+    struct_array_free(ev_data->all_header_values, true);
 #endif
 
     free(ev_data);
@@ -137,6 +152,9 @@ void reset_event_data(struct event_data *ev) {
     bytearray_clear(ev->header_value);
     ev->header_value_loc = NULL;
     ev->header_field_loc = NULL;
+
+    struct_array_clear(ev->all_header_fields, true);
+    struct_array_clear(ev->all_header_values, true);
 #endif
 
     ev->is_cancelled = false;
@@ -173,7 +191,7 @@ void reset_connection_info(struct connection_info *ci) {
 
 /* Free memory associated with event data */
 void free_event_data(struct event_data *ev) {
-    //log_trace("Freeing event data %p\n", ev);
+    log_trace("Freeing event data %p\n", ev);
     if (ev != NULL) {
         bytearray_free(ev->url);
         bytearray_free(ev->body);
@@ -186,6 +204,9 @@ void free_event_data(struct event_data *ev) {
 #if ENABLE_HEADERS_TRACKING
         bytearray_free(ev->header_field);
         bytearray_free(ev->header_value);
+
+        struct_array_free(ev->all_header_fields, true);
+        struct_array_free(ev->all_header_values, true);
 #endif
 
         free(ev);
@@ -195,9 +216,7 @@ void free_event_data(struct event_data *ev) {
 /* Free memory and close sockets associated with connection structure */
 void free_connection_info(struct connection_info *ci) {
     if (ci != NULL) {
-#ifdef TRACE
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
-#endif
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
             if (listen_fd && close(listen_fd)) {
@@ -214,9 +233,7 @@ void free_connection_info(struct connection_info *ci) {
 
         free(ci);
     } else {
-#ifdef TRACE
         log_trace("Freeing NULL conn info (%d total)\n", num_conn_infos);
-#endif
     }
 }
 
