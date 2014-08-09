@@ -31,6 +31,7 @@ struct event_data {
 #if ENABLE_SESSION_TRACKING
     bytearray_t *cookie_header_value; /* Do not free */
     bytearray_t *content_length_header_value; /* Do not free */
+    struct_array_t *cookie_array;
 #endif
 
     bytearray_t *header_field;
@@ -48,6 +49,7 @@ struct event_data {
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
+    bool found_shim_session_cookie : 1;
 #endif
 
 #if ENABLE_CSRF_PROTECTION

@@ -15,19 +15,8 @@ http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
     .on_url = on_url_cb,
     .on_status = NULL,
-
-#if ENABLE_HEADER_FIELD_CHECK
     .on_header_field = on_header_field_cb,
-#else
-    .on_header_field = NULL,
-#endif
-
-#if ENABLE_HEADER_VALUE_CHECK
     .on_header_value = on_header_value_cb,
-#else
-    .on_header_value = NULL,
-#endif
-
     .on_headers_complete = on_headers_complete_cb,
     .on_body = on_body_cb,
     .on_message_complete = on_message_complete_cb
@@ -37,19 +26,8 @@ http_parser_settings server_parser_settings = {
     .on_message_begin = on_message_begin_cb,
     .on_url = NULL,
     .on_status = on_status_cb,
-
-#if ENABLE_HEADER_FIELD_CHECK
     .on_header_field = on_header_field_cb,
-#else
-    .on_header_field = NULL,
-#endif
-
-#if ENABLE_HEADER_VALUE_CHECK
     .on_header_value = on_header_value_cb,
-#else
-    .on_header_value = NULL,
-#endif
-
     .on_headers_complete = on_headers_complete_cb,
     .on_body = on_body_cb,
     .on_message_complete = on_message_complete_cb
@@ -95,6 +73,7 @@ struct page_conf *url_find_matching_page(char *url, size_t len) {
     return &default_page_conf;
 }
 
+/* Add buffer to end of bytearray, cancelling the connection if it fails */
 int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data) {
     if (bytearray_append(b, at, length) < 0) {
@@ -107,6 +86,7 @@ int update_bytearray(bytearray_t *b, const char *at, size_t length,
 
 /* Inspects current header pair */
 void check_header_pair(struct event_data *ev_data) {
+    int rc = 0;
     char *field = ev_data->header_field->data;
     char *value = ev_data->header_value->data;
     size_t field_len = ev_data->header_field->len;
@@ -143,7 +123,6 @@ void check_header_pair(struct event_data *ev_data) {
 #endif
     } else {
         /* Response Headers */
-
         if (field_len == TRANSFER_ENCODING_HEADER_STRLEN
                 && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0) {
             /* Warn against Transfer-Encoding */
@@ -175,6 +154,25 @@ void check_header_pair(struct event_data *ev_data) {
         ev_data->content_length_header_value = ev_data->header_value;
     }
 #endif
+
+    /* Add header field and value to list of all header pairs */
+    rc = struct_array_add(ev_data->all_header_fields,
+            ev_data->header_field);
+    if (rc < 0) {
+        log_warn("header_fields append failed\n");
+        cancel_connection(ev_data);
+        return;
+    }
+    ev_data->header_field = NULL;
+
+    rc = struct_array_add(ev_data->all_header_values,
+            ev_data->header_value);
+    if (rc < 0) {
+        log_warn("header_values append failed\n");
+        cancel_connection(ev_data);
+        return;
+    }
+    ev_data->header_value = NULL;
 }
 
 
@@ -189,27 +187,6 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
     if (is_header_field && !ev_data->just_visited_header_field
             && ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
-
-
-        /* Add header field and value to list of all header pairs */
-        rc = struct_array_add(ev_data->all_header_fields,
-                ev_data->header_field);
-        if (rc < 0) {
-            log_warn("header_fields append failed\n");
-            cancel_connection(ev_data);
-            return;
-        }
-        ev_data->header_field = NULL;
-
-        rc = struct_array_add(ev_data->all_header_values,
-                ev_data->header_value);
-        if (rc < 0) {
-            log_warn("header_values append failed\n");
-            cancel_connection(ev_data);
-            return;
-        }
-        ev_data->header_value = NULL;
-
 
         ev_data->header_field = bytearray_new();
         if (ev_data->header_field == NULL) {
@@ -926,12 +903,20 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
     if (send_headers) {
 
 #if ENABLE_SESSION_TRACKING
-
+        /* Add Set-Cookie header */
         if (ev_data->type == SERVER_LISTENER
                 && add_set_cookie_header(ev_data) < 0) {
             return 1;
         }
 
+        /* Remove SHIM_SESSID cookie from Cookie header */
+        if (ev_data->type == CLIENT_LISTENER
+                && ev_data->cookie_header_value != NULL
+                && remove_shim_sessid_cookie(ev_data) < 0) {
+            return 1;
+        }
+
+        /* Modify Content-Length header as needed */
         if (ev_data->content_length_specified
                 && set_new_content_length(ev_data) < 0) {
             return 1;

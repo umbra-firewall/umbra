@@ -278,13 +278,13 @@ int get_http_response_phrase(struct event_data *ev_data, char *buf,
     }
 
     int rc = sscanf(ev_data->headers_cache->data,
-            "%s %u %" XSTR(MAX_HTTP_REASON_PHRASE_LEN) "s", http_version,
+            "%s %u %" XSTR(MAX_HTTP_REASON_PHRASE_LEN) "s\n", http_version,
             &status, buf);
     if (rc != 3) {
         return -1;
     }
 
-    *phrase_len = rc;
+    *phrase_len = strlen(buf);
 
     return 0;
 }

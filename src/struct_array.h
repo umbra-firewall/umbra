@@ -18,5 +18,8 @@ void struct_array_free(struct_array_t *sa, bool free_members);
 int struct_array_add(struct_array_t *sa, DATATYPE item);
 int struct_array_clear(struct_array_t *sa, bool free_members);
 void struct_array_foreach(struct_array_t *sa, void (*func)(DATATYPE));
+int struct_array_remove_element(struct_array_t *sa, int index,
+        bool free_element);
+int struct_array_find_element_idx(struct_array_t *sa, DATATYPE item);
 
 #endif

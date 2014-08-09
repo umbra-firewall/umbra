@@ -75,6 +75,12 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
             log_warn("Allocating new bytearray failed\n");
             goto error;
         }
+
+        if ((ev_data->cookie_array = struct_array_new()) == NULL) {
+            log_warn("Allocating new struct array failed\n");
+            goto error;
+        }
+
 #endif
 
         if ((ev_data->header_field = bytearray_new()) == NULL) {
@@ -136,6 +142,7 @@ void reset_event_data(struct event_data *ev) {
     ev->cookie_header_value = NULL;
     ev->content_length_header_value = NULL;
     bytearray_clear(ev->headers_cache);
+    struct_array_clear(ev->cookie_array, true);
 #endif
 
     bytearray_clear(ev->header_field);
@@ -154,6 +161,7 @@ void reset_event_data(struct event_data *ev) {
 
 #if ENABLE_SESSION_TRACKING
     ev->content_length_specified = false;
+    ev->found_shim_session_cookie = false;
 #endif
 
 #if ENABLE_CSRF_PROTECTION
@@ -185,6 +193,7 @@ void free_event_data(struct event_data *ev) {
 
 #if ENABLE_SESSION_TRACKING
         bytearray_free(ev->headers_cache);
+        struct_array_free(ev->cookie_array, true);
 #endif
 
         bytearray_free(ev->header_field);

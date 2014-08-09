@@ -21,10 +21,12 @@ void find_session_from_cookie(struct event_data *ev_data) {
         return;
     }
 
-    char *sess_id = extract_sessid_cookie_value(
+    char *sess_id = extract_sessid_parse_cookie(
             ev_data->cookie_header_value->data,
             ev_data->cookie_header_value->len, ev_data);
-    if (sess_id == NULL) {
+    ev_data->found_shim_session_cookie = (sess_id != NULL);
+
+    if (!ev_data->found_shim_session_cookie) {
         log_trace("SESSION_ID not found in HTTP request\n");
         return;
     }
@@ -55,8 +57,8 @@ void find_session_from_cookie(struct event_data *ev_data) {
 #endif
 
 /* Returns value of session id given a NUL terminated string with the Cookie
- * header value. */
-char *extract_sessid_cookie_value(char *cookie_header_value,
+ * header value. Also populates the struct_array of cookies. */
+char *extract_sessid_parse_cookie(char *cookie_header_value,
         size_t cookie_header_len, struct event_data *ev_data) {
     char *ret = NULL;
 
@@ -75,6 +77,11 @@ char *extract_sessid_cookie_value(char *cookie_header_value,
 
     /* Examine each query parameter */
     while (tok  != NULL) {
+        bytearray_t *ba = bytearray_new_copy(tok, strlen(tok));
+        if (ba == NULL) {
+            goto finish;
+        }
+
         tok = strstr(tok, SHIM_SESSID_NAME "=");
         if (tok) {
             tok += SHIM_SESSID_NAME_STRLEN + 1;
@@ -82,7 +89,10 @@ char *extract_sessid_cookie_value(char *cookie_header_value,
                 tok++;
             }
             ret = tok;
-            goto finish;
+            bytearray_free(ba);
+        } else {
+            /* Only add to array if not SHIM_SESSID */
+            struct_array_add(ev_data->cookie_array, ba);
         }
         tok = strtok(NULL, ";");
     }
@@ -339,6 +349,69 @@ int set_new_content_length(struct event_data *ev_data) {
 
         log_trace("  Replacing Content-Length: new=%s\n",
                 ev_data->content_length_header_value->data);
+    }
+
+    return 0;
+
+error:
+    cancel_connection(ev_data);
+    return -1;
+}
+
+/* Removes SHIM_SESSID part of cookie */
+int remove_shim_sessid_cookie(struct event_data *ev_data) {
+    int i;
+
+    log_trace("Removing shim session ID from cookie header value\n");
+
+    bytearray_t *c = ev_data->cookie_header_value;
+
+    if (bytearray_clear(c) < 0) {
+        cancel_connection(ev_data);
+        goto error;
+    }
+
+    if (ev_data->found_shim_session_cookie && ev_data->cookie_array->len <= 0) {
+        log_dbg("Removing Cookie header; only has SHIM_SESSID\n");
+
+        int cookie_idx = struct_array_find_element_idx(
+                ev_data->all_header_values, c);
+        if (cookie_idx < 0) {
+            log_error("Could not find cookie_value in array\n");
+            goto error;
+        }
+
+        if (struct_array_remove_element(ev_data->all_header_fields, cookie_idx,
+                true) < 0) {
+            log_error("Failed to remove Cookie header\n");
+            goto error;
+        }
+        if (struct_array_remove_element(ev_data->all_header_values,
+                                cookie_idx, true) < 0) {
+            log_error("Failed to remove Cookie header\n");
+            goto error;
+        }
+    } else {
+        if (bytearray_clear(c) < 0) {
+            goto error;
+        }
+
+        if (bytearray_append(c, ev_data->cookie_array->data[0]->data,
+                ev_data->cookie_array->data[0]->len) < 0) {
+            goto error;
+        }
+
+        for (i = 1; i < ev_data->cookie_array->len; i++) {
+            if (bytearray_append(c, ";", 1) < 0) {
+                goto error;
+            }
+            if (bytearray_append(c, ev_data->cookie_array->data[i]->data,
+                    ev_data->cookie_array->data[i]->len) < 0) {
+                goto error;
+            }
+        }
+
+        log_dbg("New cookie: \"%s\"\n", ev_data->cookie_header_value->data);
     }
 
     return 0;

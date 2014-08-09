@@ -23,8 +23,6 @@ int on_headers_complete_cb(http_parser *p) {
         check_header_pair(ev_data);
 
         /* We are done with tracking headers */
-        bytearray_clear(ev_data->header_field);
-        bytearray_clear(ev_data->header_value);
     }
 
     if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
@@ -113,7 +111,6 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
     return 0;
 }
 
-#if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("** Header field: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
@@ -136,10 +133,8 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
 
     return 0;
 }
-#endif
 
 
-#if ENABLE_HEADER_VALUE_CHECK
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     //log_trace("** Header value: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
@@ -162,7 +157,6 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 
     return 0;
 }
-#endif
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_PARAM_CHECKS

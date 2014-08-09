@@ -130,9 +130,7 @@ int main(int argc, char **argv) {
 
     printf("\n** Enable Config **\n");
     print_bool_macro(ENABLE_HEADER_FIELD_LEN_CHECK);
-    print_bool_macro(ENABLE_HEADER_FIELD_CHECK);
     print_bool_macro(ENABLE_HEADER_VALUE_LEN_CHECK);
-    print_bool_macro(ENABLE_HEADER_VALUE_CHECK);
     print_bool_macro(ENABLE_REQUEST_TYPE_CHECK);
     print_bool_macro(ENABLE_PARAM_CHECKS);
     print_bool_macro(ENABLE_PARAM_LEN_CHECK);

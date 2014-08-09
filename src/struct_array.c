@@ -91,3 +91,47 @@ int struct_array_clear(struct_array_t *sa, bool free_members) {
 
     return 0;
 }
+
+int struct_array_remove_element(struct_array_t *sa, int index,
+        bool free_element) {
+    if (sa == NULL) {
+        log_dbg("Tried to clear NULL array\n");
+        return -1;
+    }
+
+    if (index < 0 || index >= sa->len) {
+        log_error("Index %d is out of bounds; length=%zd\n", index, sa->len);
+    }
+
+    if (free_element) {
+        bytearray_free(sa->data[index]);
+    }
+
+    if (sa->len > 1) {
+        void *to = sa->data + index;
+        void *from = sa->data + index + 1;
+        size_t len = (sa->len - index - 1) * sizeof(DATATYPE);
+        memmove(to, from, len);
+    }
+
+    sa->len--;
+
+    return 0;
+}
+
+int struct_array_find_element_idx(struct_array_t *sa, DATATYPE item) {
+    int i;
+
+    if (sa == NULL) {
+        log_dbg("Tried to clear NULL array\n");
+        return -1;
+    }
+
+    for (i = 0; i < sa->len; i++) {
+        if (sa->data[i] == item) {
+            return i;
+        }
+    }
+
+    return -1;
+}
