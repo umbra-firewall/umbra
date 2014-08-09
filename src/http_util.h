@@ -1,6 +1,7 @@
 #ifndef HTTP_UTIL_H
 #define HTTP_UTIL_H
 
+#include "shim_struct.h"
 #include "http_parser.h"
 
 /* HTTP_REQ_* definitions must be defined in same order as http_parser */
@@ -17,6 +18,9 @@
 
 /* HTTP macros */
 #define CRLF "\r\n"
+#define LF "\n"
+
+#define MAX_HTTP_REASON_PHRASE_LEN 200
 
 #define HTTP_RESPONSE_OK \
     "HTTP/1.0 201 OK\r\n" \
@@ -48,11 +52,17 @@
 extern char *error_page_buf;
 extern size_t error_page_len;
 
+struct event_data;
+
 /* HTTP utility functions */
 int send_error_page(int sock);
 int http_parser_method_to_shim(enum http_method method);
 void init_error_page(char *error_page_file);
 bool str_to_url_encoded_memeq(const char *str, char *url_data,
         size_t url_data_len, bool *is_valid);
+void print_headers(struct event_data *ev_data);
+int send_http_headers(struct event_data *ev_data);
+int get_http_response_phrase(struct event_data *ev_data, char *buf,
+        size_t *phrase_len);
 
 #endif

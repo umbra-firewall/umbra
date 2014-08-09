@@ -69,14 +69,15 @@ int check_char_whitelist(const char *whitelist, const char c,
         struct event_data *ev_data);
 int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data);
-int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
-        http_parser_settings *parser_settings, char *insert_header,
-        size_t insert_header_len, size_t insert_offset);
+int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
+        size_t body_buf_len, struct event_data *ev_data,
+        http_parser_settings *parser_settings,
+        bool send_headers);
 void parse_argument_name_value(char *arg, size_t arg_len, char **name,
         size_t *name_len, char **value, size_t *value_len);
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length);
-int populate_set_cookie_header(char *buf, size_t buf_len,
+int populate_set_cookie_header_value(char *buf, size_t buf_len,
         struct event_data *ev_data);
 int check_send_csrf_js_snippet(struct event_data *ev_data);
 int flush_server_event(struct event_data *server_ev_data);

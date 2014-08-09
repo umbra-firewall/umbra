@@ -7,7 +7,6 @@
 #include "shim_struct.h"
 #include "log.h"
 
-int connction_num = 0;
 char *http_port_str, *server_http_port_str;
 
 bool sigint_received = false;
@@ -107,12 +106,12 @@ int update_bytearray(bytearray_t *b, const char *at, size_t length,
 }
 
 /* Inspects current header pair */
-#if ENABLE_SESSION_TRACKING
 void check_header_pair(struct event_data *ev_data) {
     char *field = ev_data->header_field->data;
     char *value = ev_data->header_value->data;
     size_t field_len = ev_data->header_field->len;
     size_t value_len = ev_data->header_value->len;
+    (void) value_len;
 
     /* NUL terminate header field and value */
     if (bytearray_append(ev_data->header_field, "\0", 1) < 0) {
@@ -133,13 +132,15 @@ void check_header_pair(struct event_data *ev_data) {
     if (ev_data->type == CLIENT_LISTENER ) {
         /* Request Headers */
 
+#if ENABLE_SESSION_TRACKING
         /* Handle Cookie header */
         if (field_len == COOKIE_HEADER_STRLEN
                 && strcasecmp(COOKIE_HEADER, field) == 0) {
             log_trace("Found Cookie header\n");
-            /* Copy cookie, including NUL byte */
-            update_bytearray(ev_data->cookie, value, value_len + 1, ev_data);
+            /* Set pointer to cookie value */
+            ev_data->cookie_header_value = ev_data->header_value;
         }
+#endif
     } else {
         /* Response Headers */
 
@@ -161,49 +162,38 @@ void check_header_pair(struct event_data *ev_data) {
             log_warn("Content-Encoding \"%s\" is not supported\n", value);
             cancel_connection(ev_data);
 
-        } else if (field_len == CONTENT_LENGTH_HEADER_STRLEN
-                && strcasecmp(CONTENT_LENGTH_HEADER, field) == 0) {
-            /* Handle Content-Length */
-            log_dbg("Content-Length specified\n");
-            ev_data->content_length_specified = true;
-            ev_data->content_len_value_len = value_len;
-            ev_data->content_len_value = ev_data->header_value_loc;
         }
     }
-}
+
+#if ENABLE_SESSION_TRACKING
+    /* Request or Response headers */
+    if (field_len == CONTENT_LENGTH_HEADER_STRLEN
+            && strcasecmp(CONTENT_LENGTH_HEADER, field) == 0) {
+        /* Handle Content-Length */
+        log_dbg("Content-Length specified\n");
+        ev_data->content_length_specified = true;
+        ev_data->content_length_header_value = ev_data->header_value;
+    }
 #endif
+}
 
 
 /* Updates current header field or value.
  * Inspects previous header once a new header starts. */
-#if ENABLE_HEADERS_TRACKING
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length) {
     bytearray_t *ba;
     int rc;
 
-    if (is_header_field) {
-        ba = ev_data->header_field;
-    } else {
-        ba = ev_data->header_value;
-    }
-
-
-    /* Set original field and value locations */
-    if (is_header_field && !ev_data->just_visited_header_field) {
-        ev_data->header_field_loc = at;
-    } else if (!is_header_field && ev_data->just_visited_header_field) {
-        ev_data->header_value_loc = at;
-    }
-
     /* Inspect header if field and value are present. */
     if (is_header_field && !ev_data->just_visited_header_field
-            && ba->len != 0) {
+            && ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
 
 
         /* Add header field and value to list of all header pairs */
-        rc = struct_array_add(ev_data->all_header_fields, ev_data->header_field);
+        rc = struct_array_add(ev_data->all_header_fields,
+                ev_data->header_field);
         if (rc < 0) {
             log_warn("header_fields append failed\n");
             cancel_connection(ev_data);
@@ -211,7 +201,8 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         }
         ev_data->header_field = NULL;
 
-        rc = struct_array_add(ev_data->all_header_values, ev_data->header_value);
+        rc = struct_array_add(ev_data->all_header_values,
+                ev_data->header_value);
         if (rc < 0) {
             log_warn("header_values append failed\n");
             cancel_connection(ev_data);
@@ -233,10 +224,15 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         }
     }
 
+    if (is_header_field) {
+        ba = ev_data->header_field;
+    } else {
+        ba = ev_data->header_value;
+    }
+
     update_bytearray(ba, at, length, ev_data);
     ev_data->just_visited_header_field = is_header_field;
 }
-#endif
 
 
 /* Handle a new incoming connection */
@@ -371,7 +367,7 @@ struct params *find_matching_param(char *name, size_t name_len,
                 &is_valid);
         if (!is_valid) {
             log_warn("Invalid URL encoding\n");
-            cancel_connection(ev_data);;
+            cancel_connection(ev_data);
         }
         if (matches) {
             return &params[i];
@@ -476,7 +472,8 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
 
 #if ENABLE_CSRF_PROTECTION
     /* Check if argument is CSRF token */
-    if (page_match->receives_csrf_form_action && name_len == CSRF_TOKEN_NAME_LEN
+    if (page_match->receives_csrf_form_action
+            && name_len == CSRF_TOKEN_NAME_LEN
             && memcmp(name, CSRF_TOKEN_NAME, CSRF_TOKEN_NAME_LEN) == 0) {
 
         /* Check that valid session cookie was sent */
@@ -697,10 +694,7 @@ int handle_client_server_event(struct epoll_event *ev) {
     struct event_data *ev_data = (struct event_data *) ev->data.ptr;
     ev_data->got_eagain = false; // Reset on each handle call
     event_t type = ev_data->type;
-
-#if ENABLE_SESSION_TRACKING
     bytearray_t *headers_cache = ev_data->headers_cache;
-#endif
 
     /* Reset conn info if already processed a response */
     if (type == CLIENT_LISTENER
@@ -730,7 +724,6 @@ int handle_client_server_event(struct epoll_event *ev) {
     while (!done) {
         count = read(ev_data->listen_fd, buf, READ_BUF_SIZE);
         if (count == -1) {
-            log_dbg("    read=%zd, errno=%d\n", count, errno);
             /* If errno == EAGAIN, that means we have read all
              data for now. So go back to the main loop. */
             if (errno == EAGAIN) {
@@ -751,10 +744,10 @@ int handle_client_server_event(struct epoll_event *ev) {
             done = 1;
         }
 
-#if ENABLE_SESSION_TRACKING
-        /* Add session Set-Cookie header */
-        if (type == SERVER_LISTENER && headers_cache) {
-            log_dbg("Caching first part of response\n");
+
+        /* Do not have all headers cached yet */
+        if (headers_cache) {
+            log_dbg("Caching message headers\n");
             if (bytearray_append(headers_cache, buf, count) < 0) {
                 log_error("bytearray_append failed\n");
                 cancel_connection(ev_data);
@@ -770,26 +763,26 @@ int handle_client_server_event(struct epoll_event *ev) {
                 break;
             }
 
-            if (strstr(headers_cache->data, "\r\n\r\n")
-                    || strstr(headers_cache->data, "\n\n")) {
-                /* Have all headers in buffer, so if Content-Length is
-                 * specified, then it is in the buffer. */
+            char *crlf_end = strstr(headers_cache->data, CRLF CRLF);
+            char *lf_end = strstr(headers_cache->data, LF LF);
+            if (crlf_end || lf_end) {
+                char *body_ptr = NULL;
+                size_t body_len = 0;
+                /* Set newline type */
+                if (crlf_end) {
+                    ev_data->http_msg_newline = CRLF;
+                    body_ptr = crlf_end + strlen(CRLF CRLF);
 
-                char insert_header[ESTIMATED_SET_COOKIE_HEADER_LEN + 10];
-                int insert_header_len = populate_set_cookie_header(
-                        insert_header, sizeof(insert_header), ev_data);
-                if (insert_header_len < 0) {
-                    done = 1;
-                    cancel_connection(ev_data);
-                    break;
+                } else {
+                    ev_data->http_msg_newline = LF;
+                    body_ptr = lf_end + strlen(LF LF);
                 }
-
-                char *insert_header_loc = strchr(headers_cache->data, '\n') + 1;
-                size_t insert_offset = insert_header_loc - headers_cache->data;
+                size_t headers_len = body_ptr - headers_cache->data;
+                body_len = headers_cache->len - headers_len;
 
                 done |= do_http_parse_send(headers_cache->data,
-                        headers_cache->len, ev_data, parser_settings,
-                        insert_header, insert_header_len, insert_offset);
+                        headers_cache->len, body_ptr, body_len,
+                        ev_data, parser_settings, true);
 
                 /* Done with the headers cache */
                 bytearray_free(headers_cache);
@@ -813,10 +806,10 @@ int handle_client_server_event(struct epoll_event *ev) {
             log_dbg("All response headers not received yet\n");
             continue;
         }
-#endif
+
         log_dbg("Sending data normally\n");
-        done |= do_http_parse_send(buf, count, ev_data, parser_settings, NULL,
-                0, 0);
+        done |= do_http_parse_send(NULL, 0, buf, count, ev_data,
+                parser_settings, false);
     }
 
 
@@ -877,19 +870,39 @@ int check_send_csrf_js_snippet(struct event_data *ev_data) {
 }
 #endif
 
-/* Parse http buffer and run checks. If insert_header is not NULL, it is sent
- * at insert_offset. Returns done sending on socket. */
-int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
-        http_parser_settings *parser_settings, char *insert_header,
-        size_t insert_header_len, size_t insert_offset) {
+/* Parse http buffer and run checks.
+ * headers_buf is the buffer containing the first line and all headers of the
+ *      HTTP message. It is also expected to have the contents of body_buf after
+ *      the headers (body_buf should be a pointer to the inside of headers_buf
+ *      if headers_buf is passed).
+ * body_buf is the buffer containing all data after headers.
+ * send_headers is a boolean indicating whether the headers should be sent,
+ *      which should only be set to true on the first call for a message (the
+ *      headers should only be sent once)
+ * Returns done state sending on socket. */
+int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
+        size_t body_buf_len, struct event_data *ev_data,
+        http_parser_settings *parser_settings,
+        bool send_headers) {
     int s;
+
+    char *parse_buf;
+    size_t parse_len;
+
+    if (send_headers) {
+        parse_buf = headers_buf;
+        parse_len = header_buf_len;
+    } else {
+        parse_buf = body_buf;
+        parse_len = body_buf_len;
+    }
+
+    /* Do HTTP parsing */
     size_t nparsed = http_parser_execute(&ev_data->parser, parser_settings,
-            buf, len);
+            parse_buf, parse_len);
     (void) nparsed; // Suppress unused variable warning
 
-    if (is_conn_cancelled(ev_data)) {
-        return 1;
-    }
+    log_trace("Parsed %zd / %zd bytes\n", nparsed, parse_len);
 
     enum http_errno hte = HTTP_PARSER_ERRNO(&ev_data->parser);
     if (hte != HPE_OK) {
@@ -899,96 +912,37 @@ int do_http_parse_send(char *buf, size_t len, struct event_data *ev_data,
         return 1;
     }
 
-    log_trace("Parsed %zd / %zd bytes\n", nparsed, len);
-
     if (ev_data->parser.upgrade) {
         /* Wants to upgrade connection */
         log_warn("HTTP upgrade not supported\n");
         cancel_connection(ev_data);
         return 1;
-    } else if (is_conn_cancelled(ev_data)) {
+    }
+
+    if (is_conn_cancelled(ev_data)) {
         return 1;
     }
 
+    if (send_headers) {
 
 #if ENABLE_SESSION_TRACKING
-    if (insert_header) { /* Insert header */
-        /* Send first line */
-        s = sendall(ev_data->send_fd, buf, insert_offset);
-        if (s < 0) {
-            log_error("sendall failed\n");
-            cancel_connection(ev_data);
-            return 1;
-        }
-        buf += insert_offset;
-        len -= insert_offset;
 
-        /* Send insert header */
-        s = sendall(ev_data->send_fd, insert_header, insert_header_len);
-        if (s < 0) {
-            log_error("sendall failed\n");
-            cancel_connection(ev_data);
+        if (ev_data->type == SERVER_LISTENER
+                && add_set_cookie_header(ev_data) < 0) {
             return 1;
         }
 
-        if (ev_data->conn_info->page_match->has_csrf_form
-                && ev_data->content_length_specified) {
-            size_t send_len;
-
-            /* Insert new Content-Length, accounting for JS snippet length that
-             * is to be sent. */
-
-            log_trace("Replacing Content-Length that was found\n");
-
-            /* Send up to Content-Length value */
-            send_len = ev_data->content_len_value - buf;
-            s = sendall(ev_data->send_fd, buf, send_len);
-            if (s < 0) {
-                log_error("sendall failed\n");
-                cancel_connection(ev_data);
-                return 1;
-            }
-            buf += send_len;
-            len -= send_len;
-
-            /* Read original value */
-            size_t old_len;
-            if (sscanf(buf, "%zd\n", &old_len) != 1) {
-                log_error("Could not read Content-Length value: %.*s\n",
-                        (int) ev_data->content_len_value_len, buf);
-                cancel_connection(ev_data);
-                return 1;
-            }
-
-            /* Write new value to string */
-            size_t new_len = old_len + INSERT_HIDDEN_TOKEN_JS_STRLEN;
-            char new_len_buf[ev_data->content_len_value_len + 10];
-            int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
-                    "%zd", new_len);
-            if (new_len_buf_len < 0) {
-                log_error("Could not write new calculated Content-Length "
-                        "to buffer\n");
-                cancel_connection(ev_data);
-                return 1;
-            }
-
-            /* Send new value */
-            s = sendall(ev_data->send_fd, new_len_buf, new_len_buf_len);
-            if (s < 0) {
-                log_error("sendall failed\n");
-                cancel_connection(ev_data);
-                return 1;
-            }
-
-            /* Skip over old length */
-            buf += ev_data->content_len_value_len;
-            len -= ev_data->content_len_value_len;
+        if (ev_data->content_length_specified
+                && set_new_content_length(ev_data) < 0) {
+            return 1;
         }
-    }
 #endif
 
+        send_http_headers(ev_data);
+    }
+
     /* Send rest of buf */
-    s = sendall(ev_data->send_fd, buf, len);
+    s = sendall(ev_data->send_fd, body_buf, body_buf_len);
     if (s < 0) {
         log_error("sendall failed\n");
         cancel_connection(ev_data);

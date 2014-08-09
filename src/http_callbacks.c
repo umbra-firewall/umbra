@@ -18,7 +18,6 @@ int on_headers_complete_cb(http_parser *p) {
         return -1;
     }
 
-#if ENABLE_HEADERS_TRACKING
     /* Check last header pair */
     if (ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
@@ -37,16 +36,7 @@ int on_headers_complete_cb(http_parser *p) {
     }
 
 #if DEBUG
-    /* Print header pairs saved in struct_array */
-    int i;
-    size_t len = ev_data->all_header_fields->len;
-    log_dbg("All HTTP Headers:\n");
-    for (i = 0; i < len; i++) {
-        log_dbg("  %s: %s\n", ev_data->all_header_fields->data[i]->data,
-                ev_data->all_header_values->data[i]->data);
-    }
-#endif
-
+    print_headers(ev_data);
 #endif
 
     log_trace("***HEADERS COMPLETE***\n");
@@ -125,7 +115,7 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
 
 #if ENABLE_HEADER_FIELD_CHECK
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
-    //log_trace("Header field: %.*s\n", (int)length, at);
+    //log_trace("** Header field: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
 
 #if ENABLE_HEADER_FIELD_LEN_CHECK
@@ -138,9 +128,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     }
 #endif
 
-#if ENABLE_HEADERS_TRACKING
     update_http_header_pair(ev_data, true, at, length);
-#endif
 
     if (is_conn_cancelled(ev_data)) {
         return -1;
@@ -153,7 +141,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
 
 #if ENABLE_HEADER_VALUE_CHECK
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
-    //log_trace("Header value: %.*s\n", (int)length, at);
+    //log_trace("** Header value: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
 
 #if ENABLE_HEADER_VALUE_LEN_CHECK
@@ -166,9 +154,7 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     }
 #endif
 
-#if ENABLE_HEADERS_TRACKING
     update_http_header_pair(ev_data, false, at, length);
-#endif
 
     if (is_conn_cancelled(ev_data)) {
         return -1;

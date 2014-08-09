@@ -11,15 +11,15 @@
 #define SHIM_SESSID_RAND_BYTES 10
 #define SHIM_SESSID_LEN (2 * SHIM_SESSID_RAND_BYTES)
 
-#define SET_COOKIE_HEADER_FORMAT \
-    "Set-Cookie: " \
+#define SET_COOKIE_HEADER_FIELD "Set-Cookie"
+#define SET_COOKIE_HEADER_FIELD_STRLEN (sizeof(SET_COOKIE_HEADER_FIELD) - 1)
+#define SET_COOKIE_HEADER_VALUE_FORMAT \
         SHIM_SESSID_NAME "=%s; " \
         "max-age=" XSTR(SESSION_LIFE_SECONDS) "; " \
-        "path=/" \
-        CRLF
+        "path=/"
 
-#define ESTIMATED_SET_COOKIE_HEADER_LEN \
-    (sizeof(SET_COOKIE_HEADER_FORMAT) + SHIM_SESSID_LEN)
+#define ESTIMATED_SET_COOKIE_HEADER_VALUE_LEN \
+    (sizeof(SET_COOKIE_HEADER_VALUE_FORMAT) + SHIM_SESSID_LEN)
 
 #define MAX_HTTP_RESPONSE_HEADERS_SIZE 8096
 
@@ -78,7 +78,8 @@ struct event_data;
 struct connection_info;
 
 void find_session_from_cookie(struct event_data *ev_data);
-char *extract_sessid_cookie_value(char *cookie_header_value);
+char *extract_sessid_cookie_value(char *cookie_header_value,
+        size_t cookie_header_len, struct event_data *ev_data);
 struct session *get_conn_session(struct connection_info *conn_info);
 struct session *new_session();
 bool is_session_entry_clear(struct session *sess);
@@ -88,5 +89,7 @@ struct session *search_session(char *sess_id);
 void expire_sessions();
 bool is_session_expired(struct session *s);
 int get_num_active_sessions();
+int add_set_cookie_header(struct event_data *ev_data);
+int set_new_content_length(struct event_data *ev_data);
 
 #endif

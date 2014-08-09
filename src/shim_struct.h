@@ -13,10 +13,6 @@ typedef enum {
     CLIENT_LISTENER, SERVER_LISTENER
 } event_t;
 
-typedef enum {
-    WAITING_FOR_URL, URL_COMPLETE, HEADERS_COMPLETE, MESSAGE_COMPLETE
-} conn_state_t;
-
 
 /* Structures */
 
@@ -29,23 +25,18 @@ struct event_data {
     struct connection_info *conn_info;
     bytearray_t *url;
     bytearray_t *body;
+    char *http_msg_newline;
+    bytearray_t *headers_cache;
 
 #if ENABLE_SESSION_TRACKING
-    bytearray_t *cookie;
-    bytearray_t *headers_cache;
-    const char *content_len_value;
-    size_t content_len_value_len;
+    bytearray_t *cookie_header_value; /* Do not free */
+    bytearray_t *content_length_header_value; /* Do not free */
 #endif
 
-#if ENABLE_HEADERS_TRACKING
     bytearray_t *header_field;
     bytearray_t *header_value;
-    const char *header_value_loc;
-    const char *header_field_loc;
     struct_array_t *all_header_fields;
     struct_array_t *all_header_values;
-#endif
-
     event_t type : 8;
     bool is_cancelled : 1;
     bool msg_begun : 1;

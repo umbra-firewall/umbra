@@ -21,6 +21,20 @@ bytearray_t* bytearray_new() {
     return ba;
 }
 
+bytearray_t* bytearray_new_copy(char *data, size_t len) {
+    bytearray_t *ba = bytearray_new();
+    if (ba == NULL) {
+        return NULL;
+    }
+
+    if (bytearray_append(ba, data, len) < 0) {
+        bytearray_free(ba);
+        return NULL;
+    }
+
+    return ba;
+}
+
 void bytearray_free(bytearray_t *ba) {
     if (ba == NULL) {
         return;

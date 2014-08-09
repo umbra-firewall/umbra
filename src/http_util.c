@@ -112,3 +112,179 @@ bool str_to_url_encoded_memeq(const char *str, char *url_data,
     }
     return str == str_should_end && *str == '\0';
 }
+
+#ifdef DEBUG
+void print_headers(struct event_data *ev_data) {
+    /* Print header pairs saved in struct_array */
+    int i;
+    size_t len = ev_data->all_header_fields->len;
+    log_dbg("All HTTP Headers:\n");
+    for (i = 0; i < len; i++) {
+        log_dbg("  %s: %s\n", ev_data->all_header_fields->data[i]->data,
+                ev_data->all_header_values->data[i]->data);
+    }
+}
+#endif
+
+/* Send HTTP headers based on stored fields and values */
+int send_http_headers(struct event_data *ev_data) {
+    log_dbg("Now modified headers\n");
+#ifdef DEBUG
+    print_headers(ev_data);
+#endif
+
+    int i, rc;
+    char *send_buf = NULL;
+    char *p;
+    int header_len_estimate = 4; /* Account for first/last newlines */
+    size_t send_buf_len = 0;
+    size_t newline_len = strlen(ev_data->http_msg_newline);
+    char reason_phrase[MAX_HTTP_REASON_PHRASE_LEN + 1];
+    size_t phrase_len;
+
+    /* Assert that there are the same number of header fields and values */
+    if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
+        log_error("The number of header fields != number of values\n");
+        goto error;
+    }
+
+    /* Account for field, value, colon, space, and newline */
+    size_t len = ev_data->all_header_fields->len;
+    for (i = 0; i < len; i++) {
+        header_len_estimate += ev_data->all_header_fields->data[i]->len
+                + ev_data->all_header_values->data[i]->len + 2 + newline_len;
+    }
+
+    /* Calculate space required */
+    if (ev_data->type == CLIENT_LISTENER) {
+        /* Example: GET / HTTP/1.1 */
+
+        /* Account for first line bytes */
+        size_t method_len = strlen(http_method_str(ev_data->parser.method));
+        size_t url_len = ev_data->url->len;
+        header_len_estimate += method_len + 2 + url_len + strlen("HTTP/1.1");
+    } else { /* SERVER_LISTENER */
+        /* Example: HTTP/1.1 200 OK */
+
+        /* Account for first line bytes */
+        if (ev_data->parser.status_code > 999) {
+            log_error("Response status code too large: %u\n",
+                    ev_data->parser.status_code);
+        }
+
+        /* Get Response phrase */
+        if (get_http_response_phrase(ev_data, reason_phrase, &phrase_len) < 0) {
+            log_error("Could not parse HTTP response reason phrase\n");
+            goto error;
+        }
+
+        header_len_estimate += strlen("HTTP/1.1") + 5 + phrase_len;
+    }
+
+    /* Allocate send buffer */
+    send_buf = malloc(header_len_estimate);
+    if (send_buf == NULL) {
+        perror("malloc");
+        goto error;
+    }
+    p = send_buf;
+
+
+    /* Add first line to send buffer */
+    log_dbg("Adding first line\n");
+    if (ev_data->type == CLIENT_LISTENER) {
+        rc = snprintf(p, header_len_estimate, "%s %.*s HTTP/%d.%d%s",
+                http_method_str(ev_data->parser.method),
+                (int) ev_data->url->len, ev_data->url->data,
+                ev_data->parser.http_major, ev_data->parser.http_minor,
+                ev_data->http_msg_newline);
+        if (rc > header_len_estimate || rc < 0) {
+            log_error("rc=%d, header_len_estimate=%d\n", rc, header_len_estimate);
+            goto error;
+        }
+        p += rc;
+        send_buf_len += rc;
+        header_len_estimate -= rc;
+    } else { /* SERVER_LISTENER */
+        rc = snprintf(p, header_len_estimate, "HTTP/%d.%d %03u %.*s%s",
+                ev_data->parser.http_major, ev_data->parser.http_minor,
+                ev_data->parser.status_code, (int) phrase_len, reason_phrase,
+                ev_data->http_msg_newline);
+        if (rc > header_len_estimate || rc < 0) {
+            log_error("rc=%d, header_len_estimate=%d\n", rc, header_len_estimate);
+            goto error;
+        }
+        p += rc;
+        send_buf_len += rc;
+        header_len_estimate -= rc;
+    }
+
+
+    /* Add headers to send buffer */
+    for (i = 0; i < len; i++) {
+        if (header_len_estimate <= 0) {
+            goto error;
+        }
+        log_dbg("  Adding header %d\n", i);
+        /* Fields/values should be NUL terminated from check_header_pair() */
+        rc = snprintf(p, header_len_estimate, "%s: %s%s",
+                ev_data->all_header_fields->data[i]->data,
+                ev_data->all_header_values->data[i]->data,
+                ev_data->http_msg_newline);
+        if (rc > header_len_estimate || rc < 0) {
+            log_error("rc=%d, header_len_estimate=%d\n", rc,
+                    header_len_estimate);
+            goto error;
+        }
+        p += rc;
+        send_buf_len += rc;
+        header_len_estimate -= rc;
+    }
+
+    /* Add last newline */
+    if (header_len_estimate < newline_len) {
+        goto error;
+    }
+    memcpy(p, ev_data->http_msg_newline, newline_len);
+    p += newline_len;
+    send_buf_len += newline_len;
+    header_len_estimate -= newline_len;
+
+    /* Send buffer */
+    if (sendall(ev_data->send_fd, send_buf, send_buf_len) < 0) {
+        goto error;
+    }
+
+    free(send_buf);
+    return 0;
+
+error:
+    free(send_buf);
+    cancel_connection(ev_data);
+    return -1;
+}
+
+/* Writes HTTP response phrase to buf of length MAX_HTTP_REASON_PHRASE_LEN + 1.
+ * Writes length of phrase to phrase_len.
+ * Returns 0 on success, -1 otherwise. */
+int get_http_response_phrase(struct event_data *ev_data, char *buf,
+        size_t *phrase_len) {
+    char http_version[20];
+    unsigned int status;
+    memset(buf, 0, MAX_HTTP_REASON_PHRASE_LEN + 1);
+
+    if (phrase_len == NULL) {
+        return -1;
+    }
+
+    int rc = sscanf(ev_data->headers_cache->data,
+            "%s %u %" XSTR(MAX_HTTP_REASON_PHRASE_LEN) "s", http_version,
+            &status, buf);
+    if (rc != 3) {
+        return -1;
+    }
+
+    *phrase_len = rc;
+
+    return 0;
+}

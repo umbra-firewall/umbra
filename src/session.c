@@ -16,7 +16,14 @@ void find_session_from_cookie(struct event_data *ev_data) {
     /* Cookie should be NUL terminated from check_header_pair(),
      * so C string functions can be used. */
 
-    char *sess_id = extract_sessid_cookie_value(ev_data->cookie->data);
+    if (ev_data->cookie_header_value == NULL) {;
+        log_trace("No Cookie header found; so no SESSION_ID\n");
+        return;
+    }
+
+    char *sess_id = extract_sessid_cookie_value(
+            ev_data->cookie_header_value->data,
+            ev_data->cookie_header_value->len, ev_data);
     if (sess_id == NULL) {
         log_trace("SESSION_ID not found in HTTP request\n");
         return;
@@ -49,7 +56,21 @@ void find_session_from_cookie(struct event_data *ev_data) {
 
 /* Returns value of session id given a NUL terminated string with the Cookie
  * header value. */
-char *extract_sessid_cookie_value(char *cookie_header_value) {
+char *extract_sessid_cookie_value(char *cookie_header_value,
+        size_t cookie_header_len, struct event_data *ev_data) {
+    char *ret = NULL;
+
+    bytearray_t *cookie = bytearray_new();
+    if (cookie == NULL) {
+        cancel_connection(ev_data);
+        return NULL;
+    }
+
+    if (update_bytearray(cookie, cookie_header_value, cookie_header_len + 1,
+            ev_data) < 0) {
+        goto finish;
+    }
+
     char *tok = strtok(cookie_header_value, ";");
 
     /* Examine each query parameter */
@@ -60,12 +81,15 @@ char *extract_sessid_cookie_value(char *cookie_header_value) {
             if (*tok == '"') {
                 tok++;
             }
-            return tok;
+            ret = tok;
+            goto finish;
         }
         tok = strtok(NULL, ";");
     }
 
-    return NULL;
+finish:
+    bytearray_free(cookie);
+    return ret;
 }
 
 /* Returns session structure associated with connection. If one does not exists,
@@ -187,7 +211,7 @@ int get_num_active_sessions() {
 
 /* Writes Set-Cookie header to buf. Returns the length of the cookie header
  * on success, -1 otherwise. */
-int populate_set_cookie_header(char *buf, size_t buf_len,
+int populate_set_cookie_header_value(char *buf, size_t buf_len,
         struct event_data *ev_data) {
     struct session *sess = get_conn_session(ev_data->conn_info);
     if (sess == NULL) {
@@ -198,9 +222,130 @@ int populate_set_cookie_header(char *buf, size_t buf_len,
     char *token = sess->session_id;
     log_dbg("Sending SESSION_ID: %s\n", token);
 
-    int output_len = snprintf(buf, buf_len, SET_COOKIE_HEADER_FORMAT, token);
+    int output_len = snprintf(buf, buf_len, SET_COOKIE_HEADER_VALUE_FORMAT,
+            token);
 
     return output_len;
+}
+
+/* Add session Set-Cookie header. Returns 0 on success, -1 otherwise. */
+int add_set_cookie_header(struct event_data *ev_data) {
+    bytearray_t *header_value = NULL;
+    bytearray_t *header_field = NULL;
+
+    char set_cookie_header_value[ESTIMATED_SET_COOKIE_HEADER_VALUE_LEN + 10];
+
+    int set_cookie_header_value_len = populate_set_cookie_header_value(
+            set_cookie_header_value, sizeof(set_cookie_header_value), ev_data);
+    if (set_cookie_header_value_len < 0) {
+        goto error;
+    }
+
+    /* Create header value */
+    header_value = bytearray_new();
+    if (header_value == NULL) {
+        goto error;
+    }
+
+    if (update_bytearray(header_value, set_cookie_header_value,
+            set_cookie_header_value_len, ev_data) < 0) {
+        goto error;
+    }
+
+    /* Create header field */
+    header_field = bytearray_new();
+    if (header_field == NULL) {
+        goto error;
+    }
+
+    if (update_bytearray(header_field, SET_COOKIE_HEADER_FIELD,
+            SET_COOKIE_HEADER_FIELD_STRLEN, ev_data) < 0) {
+        goto error;
+    }
+
+    /* Add Set-Cookie field and value */
+    if (struct_array_add(ev_data->all_header_fields, header_field) < 0) {
+        goto error;
+    }
+    header_field = NULL;
+    if (struct_array_add(ev_data->all_header_values, header_value) < 0) {
+        goto error;
+    }
+    header_value = NULL;
+
+    return 0;
+
+error:
+    if (header_value) {
+        bytearray_free(header_value);
+    }
+    cancel_connection(ev_data);
+    return -1;
+}
+
+/* Modify Content-Length header for changes in body length.
+ * Returns 0 on success, -1 otherwise. */
+int set_new_content_length(struct event_data *ev_data) {
+    size_t additional_length = 0;
+
+    /* Account for JS snippet length that is to be sent. */
+    if (ev_data->type == SERVER_LISTENER
+            && ev_data->conn_info->page_match->has_csrf_form) {
+        additional_length += INSERT_HIDDEN_TOKEN_JS_STRLEN;
+    }
+
+    if (ev_data->type == CLIENT_LISTENER
+            && ev_data->parser.method == HTTP_POST) {
+        // @Todo(Travis) Account for modifying POST parameters
+        additional_length += 0;
+    }
+
+
+    if (additional_length == 0) {
+        log_trace("Not changing Content-Length that was found\n");
+    } else {
+        log_trace("Replacing Content-Length: original=%s\n",
+                ev_data->content_length_header_value->data);
+        /* Read original value */
+        size_t original_len;
+        if (sscanf(ev_data->content_length_header_value->data, "%zd",
+                &original_len) != 1) {
+            log_error("Could not read Content-Length value: %.*s\n",
+                    (int) ev_data->content_length_header_value->len,
+                    ev_data->content_length_header_value->data);
+            goto error;
+        }
+
+        size_t new_len = original_len + additional_length;
+
+        /* Write new value to string */
+        char new_len_buf[ev_data->content_length_header_value->len + 10];
+        int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
+                "%zd", new_len);
+        if (new_len_buf_len < 0) {
+            log_error("Could not write new calculated Content-Length "
+                    "to buffer\n");
+            goto error;
+        }
+
+        /* Write new value to bytearray */
+        if (bytearray_clear(ev_data->content_length_header_value) < 0) {
+            goto error;
+        }
+        if (bytearray_append(ev_data->content_length_header_value, new_len_buf,
+                new_len_buf_len) < 0) {
+            goto error;
+        }
+
+        log_trace("  Replacing Content-Length: new=%s\n",
+                ev_data->content_length_header_value->data);
+    }
+
+    return 0;
+
+error:
+    cancel_connection(ev_data);
+    return -1;
 }
 
 #endif /* ENABLE_SESSION_TRACKING */

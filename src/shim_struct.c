@@ -55,6 +55,7 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         ev_data->listen_fd = listen_fd;
         ev_data->send_fd = send_fd;
         ev_data->conn_info = conn_info;
+        ev_data->http_msg_newline = NULL;
 
         if ((ev_data->url = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
@@ -67,10 +68,8 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         }
 
 #if ENABLE_SESSION_TRACKING
-        if ((ev_data->cookie = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
+        ev_data->cookie_header_value = NULL;
+        ev_data->content_length_header_value = NULL;
 
         if ((ev_data->headers_cache = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
@@ -78,7 +77,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         }
 #endif
 
-#if ENABLE_HEADERS_TRACKING
         if ((ev_data->header_field = bytearray_new()) == NULL) {
             log_warn("Allocating new bytearray failed\n");
             goto error;
@@ -89,10 +87,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
             goto error;
         }
 
-        ev_data->header_value_loc = NULL;
-        ev_data->header_field_loc = NULL;
-
-
         if ((ev_data->all_header_fields = struct_array_new()) == NULL) {
             goto error;
         }
@@ -100,7 +94,6 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         if ((ev_data->all_header_values = struct_array_new()) == NULL) {
             goto error;
         }
-#endif
 
         http_parser_init(&ev_data->parser, parser_type);
         ev_data->parser.data = ev_data;
@@ -113,17 +106,14 @@ error:
     bytearray_free(ev_data->body);
 
 #if ENABLE_SESSION_TRACKING
-    bytearray_free(ev_data->cookie);
     bytearray_free(ev_data->headers_cache);
 #endif
 
-#if ENABLE_HEADERS_TRACKING
     bytearray_free(ev_data->header_field);
     bytearray_free(ev_data->header_value);
 
     struct_array_free(ev_data->all_header_fields, true);
     struct_array_free(ev_data->all_header_values, true);
-#endif
 
     free(ev_data);
     return NULL;
@@ -137,25 +127,22 @@ void reset_event_data(struct event_data *ev) {
         log_warn("Tried to reset NULL event_data\n");
     }
 
+    ev->http_msg_newline = NULL;
+
     bytearray_clear(ev->url);
     bytearray_clear(ev->body);
 
 #if ENABLE_SESSION_TRACKING
-    bytearray_clear(ev->cookie);
+    ev->cookie_header_value = NULL;
+    ev->content_length_header_value = NULL;
     bytearray_clear(ev->headers_cache);
-    ev->content_len_value = NULL;
-    ev->content_len_value_len = 0;
 #endif
 
-#if ENABLE_HEADERS_TRACKING
     bytearray_clear(ev->header_field);
     bytearray_clear(ev->header_value);
-    ev->header_value_loc = NULL;
-    ev->header_field_loc = NULL;
 
     struct_array_clear(ev->all_header_fields, true);
     struct_array_clear(ev->all_header_values, true);
-#endif
 
     ev->is_cancelled = false;
     ev->msg_begun = false;
@@ -197,17 +184,14 @@ void free_event_data(struct event_data *ev) {
         bytearray_free(ev->body);
 
 #if ENABLE_SESSION_TRACKING
-        bytearray_free(ev->cookie);
         bytearray_free(ev->headers_cache);
 #endif
 
-#if ENABLE_HEADERS_TRACKING
         bytearray_free(ev->header_field);
         bytearray_free(ev->header_value);
 
         struct_array_free(ev->all_header_fields, true);
         struct_array_free(ev->all_header_values, true);
-#endif
 
         free(ev);
     }
