@@ -181,7 +181,6 @@ void check_header_pair(struct event_data *ev_data) {
 void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
         const char *at, size_t length) {
     bytearray_t *ba;
-    int rc;
 
     /* Inspect header if field and value are present. */
     if (is_header_field && !ev_data->just_visited_header_field
