@@ -9,7 +9,7 @@
 #include "log.h"
 
 char *shim_http_port_str, *server_http_port_str;
-char *shim_https_port_str, *server_https_port_str;
+char *shim_tls_port_str, *server_tls_port_str;
 
 char *error_page_file = NULL;
 
@@ -1021,11 +1021,11 @@ void print_usage(char **argv) {
 
     printf("Required arguments:\n");
     ARGUMENT_MAP(PRINT_USAGE_REQUIRED_LAMBDA);
-
     printf("\n");
 
     printf("Optional arguments:\n");
     ARGUMENT_MAP(PRINT_USAGE_OPTIONAL_LAMBDA);
+    printf("\n");
 }
 
 /* Parse program arguments */
@@ -1075,7 +1075,7 @@ void parse_args(int argc, char **argv) {
 
     bool args_ok = shim_http_port_str && server_http_port_str;
 #if ENABLE_HTTPS
-    args_ok &= shim_https_port_str || server_https_port_str;
+    args_ok &= shim_tls_port_str || server_tls_port_str;
 #endif
 
     if (!args_ok) {
@@ -1088,7 +1088,7 @@ void parse_args(int argc, char **argv) {
 }
 
 int main(int argc, char *argv[]) {
-    int sfd, s;
+    int sfd_http, s;
     int efd;
     struct epoll_event event;
     struct epoll_event *events;
@@ -1105,17 +1105,17 @@ int main(int argc, char *argv[]) {
     init_structures(error_page_file);
 
     /* Set up listener */
-    sfd = create_and_bind(shim_http_port_str);
-    if (sfd == -1) {
+    sfd_http = create_and_bind(shim_http_port_str);
+    if (sfd_http == -1) {
         abort();
     }
 
-    s = make_socket_non_blocking(sfd);
+    s = make_socket_non_blocking(sfd_http);
     if (s == -1) {
         abort();
     }
 
-    s = listen(sfd, SOMAXCONN);
+    s = listen(sfd_http, SOMAXCONN);
     if (s == -1) {
         perror("listen");
         abort();
@@ -1133,10 +1133,10 @@ int main(int argc, char *argv[]) {
         abort();
     }
 
-    ((struct event_data *) event.data.ptr)->listen_fd = sfd;
+    ((struct event_data *) event.data.ptr)->listen_fd = sfd_http;
 
     event.events = EPOLLIN | EPOLLET;
-    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, &event);
+    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd_http, &event);
     if (s == -1) {
         perror("epoll_ctl");
         abort();
@@ -1165,7 +1165,7 @@ int main(int argc, char *argv[]) {
 #endif
 
         for (i = 0; i < n; i++) {
-            handle_event(efd, &events[i], sfd);
+            handle_event(efd, &events[i], sfd_http);
         }
 
 #if ENABLE_SESSION_TRACKING
@@ -1179,7 +1179,7 @@ int main(int argc, char *argv[]) {
     free(event.data.ptr);
     free(error_page_buf);
 
-    close(sfd);
+    close(sfd_http);
 
     return EXIT_SUCCESS;
 }

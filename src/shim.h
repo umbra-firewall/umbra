@@ -37,12 +37,12 @@
 #define ARGUMENT_MAP(XX) \
     /* Required args */ \
     XX(0, "shim-http-port", true, true, shim_http_port_str, \
-            "HTTP shim listen port") \
+            "HTTP port on which shim should listen") \
     XX(1, "server-http-port", true, true, server_http_port_str, \
             "port of listening HTTP server") \
-    XX(2, "shim-https-port", true, ENABLE_HTTPS, shim_https_port_str, \
-            "HTTPS shim listen port") \
-    XX(3, "server-https-port", true, ENABLE_HTTPS, server_https_port_str, \
+    XX(2, "shim-tls-port", true, ENABLE_HTTPS, shim_tls_port_str, \
+            "HTTPS port on which shim should listen") \
+    XX(3, "server-tls-port", true, ENABLE_HTTPS, server_tls_port_str, \
             "port of listening HTTPS server") \
     \
     /* Optional args */ \
@@ -52,14 +52,16 @@
 #define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
     {name, required ? required_argument : optional_argument, NULL, 0},
 
+#define ARGUMENT_USAGE_FORMAT "--%-16s    %s\n"
+
 #define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
     if (required) {\
-        printf("--%s    %s\n", name, description); \
+        printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
 #define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
     if (!required) {\
-        printf("--%s    %s\n", name, description); \
+        printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
 struct variable_enabled {
