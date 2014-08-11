@@ -1,3 +1,4 @@
+#include <getopt.h>
 #include <errno.h>
 #include "shim.h"
 #include "config.h"
@@ -7,7 +8,10 @@
 #include "shim_struct.h"
 #include "log.h"
 
-char *http_port_str, *server_http_port_str;
+char *shim_http_port_str, *server_http_port_str;
+char *shim_https_port_str, *server_https_port_str;
+
+char *error_page_file = NULL;
 
 bool sigint_received = false;
 
@@ -992,6 +996,11 @@ void init_page_conf() {
     // @Todo(Travis) Create trie to index pages
 }
 
+/* Initialize OpenSSL */
+void init_ssl() {
+    ;
+}
+
 /* Do main initialization */
 void init_structures(char *error_page_file) {
     init_error_page(error_page_file);
@@ -1000,6 +1009,82 @@ void init_structures(char *error_page_file) {
 #if ENABLE_SESSION_TRACKING
     memset(current_sessions, 0, sizeof(current_sessions));
 #endif
+    init_ssl();
+}
+
+/* Print usage information for shim */
+void print_usage(char **argv) {
+    printf("Shim %s\n", SHIM_VERSION);
+    printf("Usage: %s <REQUIRED ARGUMENTS> [OPTIONAL ARGUMENTS]\n",
+            argv[0]);
+    printf("\n");
+
+    printf("Required arguments:\n");
+    ARGUMENT_MAP(PRINT_USAGE_REQUIRED_LAMBDA);
+
+    printf("\n");
+
+    printf("Optional arguments:\n");
+    ARGUMENT_MAP(PRINT_USAGE_OPTIONAL_LAMBDA);
+}
+
+/* Parse program arguments */
+void parse_args(int argc, char **argv) {
+    int c;
+
+    struct option long_options[] = {
+        ARGUMENT_MAP(GETOPT_OPTIONS_LAMBDA)
+        { 0, 0, 0, 0 }
+    };
+
+    struct variable_enabled variable_arr[] = {
+        ARGUMENT_MAP(ARG_VARIABLE_LAMBDA)
+    };
+
+    while (1) {
+        /* getopt_long stores the option index here. */
+        int option_index = 0;
+        c = getopt_long(argc, argv, "", long_options, &option_index);
+
+        /* Detect the end of the options. */
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 0:
+            if (!optarg) {
+                log_error("getopt_long did not set optarg\n");
+                abort();
+            }
+            if (variable_arr[option_index].enabled) {
+                *variable_arr[option_index].variable = optarg;
+            }
+            break;
+
+        case '?':
+            print_usage(argv);
+            exit(EXIT_FAILURE);
+            break;
+
+        default:
+            log_error("Argument parsing case not handled unexpectedly\n");
+            abort();
+        }
+    }
+
+    bool args_ok = shim_http_port_str && server_http_port_str;
+#if ENABLE_HTTPS
+    args_ok &= shim_https_port_str || server_https_port_str;
+#endif
+
+    if (!args_ok) {
+        print_usage(argv);
+        exit(EXIT_FAILURE);
+    }
+
+    log_dbg("Running with arguments:\n");
+    ARGUMENT_MAP(PRINT_ARGS_LAMBDA);
 }
 
 int main(int argc, char *argv[]) {
@@ -1007,33 +1092,20 @@ int main(int argc, char *argv[]) {
     int efd;
     struct epoll_event event;
     struct epoll_event *events;
-    char *error_page_file = NULL;
 
     memset(&event, 0, sizeof(struct epoll_event));
 
-    if (argc != 3 && argc != 4) {
-        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n",
-                argv[0]);
-        fprintf(stderr, "Shim %s\n", SHIM_VERSION);
-        exit(EXIT_FAILURE);
-    }
+    parse_args(argc, argv);
 
     if (signal(SIGINT, sigint_handler) < 0) {
         perror("signal");
         abort();
     }
 
-    http_port_str = argv[1];
-    server_http_port_str = argv[2];
-
-    if (argc == 4) {
-        error_page_file = argv[3];
-    }
-
     init_structures(error_page_file);
 
     /* Set up listener */
-    sfd = create_and_bind(http_port_str);
+    sfd = create_and_bind(shim_http_port_str);
     if (sfd == -1) {
         abort();
     }

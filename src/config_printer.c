@@ -138,6 +138,7 @@ int main(int argc, char **argv) {
     print_bool_macro(ENABLE_URL_DIRECTORY_TRAVERSAL_CHECK);
     print_bool_macro(ENABLE_CSRF_PROTECTION);
     print_bool_macro(ENABLE_SESSION_TRACKING);
+    print_bool_macro(ENABLE_HTTPS);
 
     printf("\n** Global Page Defaults **\n");
     print_page_conf(&default_page_conf, 0);

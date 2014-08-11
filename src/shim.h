@@ -33,12 +33,51 @@
 #define XSTR(a) STR(a)
 #define STR(a) #a
 
+/* index, name, required, enabled, var, description */
+#define ARGUMENT_MAP(XX) \
+    /* Required args */ \
+    XX(0, "shim-http-port", true, true, shim_http_port_str, \
+            "HTTP shim listen port") \
+    XX(1, "server-http-port", true, true, server_http_port_str, \
+            "port of listening HTTP server") \
+    XX(2, "shim-https-port", true, ENABLE_HTTPS, shim_https_port_str, \
+            "HTTPS shim listen port") \
+    XX(3, "server-https-port", true, ENABLE_HTTPS, server_https_port_str, \
+            "port of listening HTTPS server") \
+    \
+    /* Optional args */ \
+    XX(4, "error-page", false, true, error_page_file, \
+            "file containing contents for error page")
+
+#define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
+    {name, required ? required_argument : optional_argument, NULL, 0},
+
+#define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
+    if (required) {\
+        printf("--%s    %s\n", name, description); \
+    }
+
+#define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
+    if (!required) {\
+        printf("--%s    %s\n", name, description); \
+    }
+
+struct variable_enabled {
+    char **variable;
+    bool enabled;
+};
+#define ARG_VARIABLE_LAMBDA(index, name, required, enabled, var, description) \
+    {&var, enabled},
+
+#define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
+    log_dbg("  %s=%s\n", name, var ? var : "NULL");
 
 /* Function prototypes */
 
 /* Initialization functions */
 void init_structures(char *error_page_file);
 void init_page_conf();
+void init_ssl();
 
 /* Event handlers */
 void handle_event(int efd, struct epoll_event *ev, int sfd);
@@ -87,6 +126,7 @@ bool is_hex_digit(char c);
 bool is_conn_cancelled(struct event_data *ev_data);
 void cancel_connection(struct event_data *ev_data);
 int fill_rand_bytes(char *buf, size_t len);
-
+void print_usage(char **argv);
+void parse_args(int argc, char **argv);
 
 #endif
