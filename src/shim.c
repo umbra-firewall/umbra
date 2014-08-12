@@ -1,5 +1,7 @@
 #include <getopt.h>
 #include <errno.h>
+ #include <openssl/engine.h>
+ #include <openssl/conf.h>
 #include "shim.h"
 #include "config.h"
 #include "http_callbacks.h"
@@ -8,12 +10,13 @@
 #include "shim_struct.h"
 #include "log.h"
 
-char *shim_http_port_str, *server_http_port_str;
-char *shim_tls_port_str, *server_tls_port_str;
+char *shim_http_port_str = NULL, *server_http_port_str = NULL;
+char *shim_tls_port_str = NULL, *server_tls_port_str = NULL;
+char *tls_cert_file = NULL, *tls_key_file = NULL;
 
 char *error_page_file = NULL;
 
-bool sigint_received = false;
+static bool sigint_received = false;
 
 http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
@@ -216,7 +219,7 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
 
 
 /* Handle a new incoming connection */
-int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd, bool is_tls) {
     int s;
     struct epoll_event client_event = {0}, server_event = {0};
     struct connection_info *conn_info;
@@ -272,7 +275,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         }
 
         /* Allocate data */
-        conn_info = init_conn_info(infd, outfd);
+        conn_info = init_conn_info(infd, outfd, is_tls);
         if (conn_info == NULL) {
             log_error("init_conn_info() failed");
             goto error;
@@ -287,13 +290,15 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         server_event.data.ptr = conn_info->server_ev_data;
         server_event.events = EPOLLIN | EPOLLET;
 
-        s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &client_event);
+        s = epoll_ctl(efd, EPOLL_CTL_ADD, conn_info->client_ev_data->listen_fd,
+                &client_event);
         if (s == -1) {
             perror("epoll_ctl");
             goto error;
         }
 
-        s = epoll_ctl(efd, EPOLL_CTL_ADD, outfd, &server_event);
+        s = epoll_ctl(efd, EPOLL_CTL_ADD, conn_info->server_ev_data->listen_fd,
+                &server_event);
         if (s == -1) {
             perror("epoll_ctl");
             goto error;
@@ -951,7 +956,7 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
 }
 
 /* Handle epoll event */
-void handle_event(int efd, struct epoll_event *ev, int sfd) {
+void handle_event(int efd, struct epoll_event *ev, int sfd_http, int sfd_tls) {
     int done;
     struct event_data *ev_data = (struct event_data *) (ev->data.ptr);
 
@@ -964,15 +969,24 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
         ev->data.ptr = NULL;
         return;
 
-    } else if (sfd == ev_data->listen_fd) {
+    } else if (sfd_http == ev_data->listen_fd
+            || sfd_tls == ev_data->listen_fd) {
         /* We have a notification on the listening socket, which
          means one or more incoming connections. */
-        if (handle_new_connection(efd, ev, sfd) < 0) {
+        bool is_tls = sfd_tls == ev_data->listen_fd;
+        if (handle_new_connection(efd, ev, sfd_http, is_tls) < 0) {
             free_connection_info(ev_data->conn_info);
             ev->data.ptr = NULL;
         }
         return;
-
+    } else if (sfd_tls == ev_data->listen_fd) {
+        /* We have a notification on the listening socket, which
+         means one or more incoming connections. */
+        /*if (handle_new_connection(efd, ev, sfd) < 0) {
+            free_connection_info(ev_data->conn_info);
+            ev->data.ptr = NULL;
+        }*/
+        return;
     } else if (ev->data.ptr != NULL) {
         /* We have data on the fd waiting to be read. Read and
          display it. We must read whatever data is available
@@ -1008,7 +1022,22 @@ void init_page_conf() {
 
 /* Initialize OpenSSL */
 void init_ssl() {
-    ;
+    CRYPTO_malloc_init();
+    SSL_library_init();
+    SSL_load_error_strings();
+    ERR_load_BIO_strings();
+    OpenSSL_add_all_algorithms();
+}
+
+/* Free memory associated with OpenSSL */
+void free_ssl() {
+    ENGINE_cleanup();
+    CONF_modules_unload(1);
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+    sk_SSL_COMP_free(SSL_COMP_get_compression_methods());
+    ERR_remove_state(0); /* Free state of current thread */
+    ERR_free_strings();
 }
 
 /* Do main initialization */
@@ -1040,7 +1069,7 @@ void print_usage(char **argv) {
 
 /* Parse program arguments */
 void parse_program_arguments(int argc, char **argv) {
-    int c;
+    int c, i;
 
     struct option long_options[] = {
         ARGUMENT_MAP(GETOPT_OPTIONS_LAMBDA)
@@ -1083,12 +1112,16 @@ void parse_program_arguments(int argc, char **argv) {
         }
     }
 
-    bool args_ok = shim_http_port_str && server_http_port_str;
-#if ENABLE_HTTPS
-    args_ok &= shim_tls_port_str && server_tls_port_str;
-#endif
-
-    if (!args_ok) {
+    bool found_error = false;
+    int len = sizeof(variable_arr) / sizeof(struct variable_enabled);
+    for (i = 0; i < len; i++) {
+        struct variable_enabled *var = &variable_arr[i];
+        if (var->enabled && var->required && *var->variable == NULL) {
+            found_error = true;
+            printf("Argument \"--%s\" not specified\n", long_options[i].name);
+        }
+    }
+    if (found_error) {
         print_usage(argv);
         exit(EXIT_FAILURE);
     }
@@ -1097,7 +1130,9 @@ void parse_program_arguments(int argc, char **argv) {
     ARGUMENT_MAP(PRINT_ARGS_LAMBDA);
 }
 
-/* Set up non-blocking listener on port */
+/* Set up non-blocking listener on given port. Returns the listening socket
+ * file descriptor on success, -1 otherwise.
+ */
 int set_up_socket_listener(char *port_str) {
     int s, sfd;
 
@@ -1142,12 +1177,11 @@ int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
 }
 
 int main(int argc, char *argv[]) {
-    int sfd_http, s;
+    int sfd_http = 0, sfd_tls = 0;
     int efd;
     struct epoll_event event_http;
     struct epoll_event *events;
 #if ENABLE_HTTPS
-    int sfd_tls;
     struct epoll_event event_tls;
 #endif
 
@@ -1175,7 +1209,7 @@ int main(int argc, char *argv[]) {
 #if ENABLE_HTTPS
     /* Set up HTTPS listener */
     sfd_tls = set_up_socket_listener(shim_tls_port_str);
-    if (sfd_tls == -1) {
+    if (sfd_tls < 0) {
         abort();
     }
 #endif
@@ -1186,8 +1220,15 @@ int main(int argc, char *argv[]) {
         abort();
     }
 
-    init_listen_event_data(&event_http, efd, sfd_http);
+    if (init_listen_event_data(&event_http, efd, sfd_http) < 0) {
+        abort();
+    }
 
+#if ENABLE_HTTPS
+    if (init_listen_event_data(&event_tls, efd, sfd_tls) < 0) {
+        abort();
+    }
+#endif
 
     /* Buffer where events are returned */
     events = calloc(MAXEVENTS, sizeof(struct epoll_event));
@@ -1212,7 +1253,7 @@ int main(int argc, char *argv[]) {
 #endif
 
         for (i = 0; i < n; i++) {
-            handle_event(efd, &events[i], sfd_http);
+            handle_event(efd, &events[i], sfd_http, sfd_tls);
         }
 
 #if ENABLE_SESSION_TRACKING
@@ -1224,6 +1265,10 @@ int main(int argc, char *argv[]) {
     close(efd);
     free(events);
     free(event_http.data.ptr);
+#if ENABLE_HTTPS
+    free(event_tls.data.ptr);
+    free_ssl();
+#endif
     free(error_page_buf);
 
     close(sfd_http);

@@ -2,6 +2,9 @@
 #define SHIM_STRUCT_H
 
 #include <stdbool.h>
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include "bytearray.h"
 #include "struct_array.h"
 #include "shim.h"
@@ -34,6 +37,10 @@ struct event_data {
     struct_array_t *cookie_array;
 #endif
 
+#if ENABLE_HTTPS
+    SSL_CTX* ssl_ctx;
+#endif
+
     bytearray_t *header_field;
     bytearray_t *header_value;
     struct_array_t *all_header_fields;
@@ -64,12 +71,14 @@ struct connection_info {
     struct session *session;
     struct params default_params;
     struct page_conf *page_match;
+    bool is_tls;
 };
 
 /* Structure functions */
-struct connection_info *init_conn_info(int infd, int outfd);
+struct connection_info *init_conn_info(int infd, int outfd, bool is_tls);
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
-        enum http_parser_type parser_type, struct connection_info *conn_info);
+        bool is_tls, enum http_parser_type parser_type,
+        struct connection_info *conn_info);
 void reset_event_data(struct event_data *ev);
 void reset_connection_info(struct connection_info *ci);
 void free_event_data(struct event_data *ev);

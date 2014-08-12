@@ -7,7 +7,7 @@ int num_conn_infos = 0;
 #endif
 
 /* Initialize connection_info structure */
-struct connection_info *init_conn_info(int infd, int outfd) {
+struct connection_info *init_conn_info(int infd, int outfd, bool is_tls) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
     log_trace("init_conn_info() (%d total)\n", ++num_conn_infos);
@@ -17,12 +17,14 @@ struct connection_info *init_conn_info(int infd, int outfd) {
         goto fail;
     }
 
-    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, HTTP_REQUEST, conn_info);
+    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, is_tls,
+            HTTP_REQUEST, conn_info);
     if (client_ev_data == NULL) {
         goto fail;
     }
 
-    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, HTTP_RESPONSE, conn_info);
+    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, is_tls,
+            HTTP_RESPONSE, conn_info);
     if (server_ev_data == NULL) {
         goto fail;
     }
@@ -30,6 +32,7 @@ struct connection_info *init_conn_info(int infd, int outfd) {
     conn_info->client_ev_data = client_ev_data;
     conn_info->server_ev_data = server_ev_data;
     conn_info->page_match = NULL;
+    conn_info->is_tls = is_tls;
 
     return conn_info;
 
@@ -45,7 +48,8 @@ fail:
 
 /* Initialize event data structure */
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
-        enum http_parser_type parser_type, struct connection_info *conn_info) {
+        bool is_tls, enum http_parser_type parser_type,
+        struct connection_info *conn_info) {
 
     log_trace("Initializing new event_data\n");
     struct event_data *ev_data = calloc(1, sizeof(struct event_data));
@@ -103,6 +107,41 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
 
         http_parser_init(&ev_data->parser, parser_type);
         ev_data->parser.data = ev_data;
+
+#if ENABLE_HTTPS
+        if (is_tls) {
+            //@Todo(Travis) make the TLS version configurable
+            ev_data->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
+            if (ev_data->ssl_ctx == NULL) {
+                log_ssl_error();
+                goto error;
+            }
+
+            /* Generate new DH key each time */
+            SSL_CTX_set_options(ev_data->ssl_ctx, SSL_OP_SINGLE_DH_USE);
+
+            /* Pass in the server certificate chain file */
+            if (SSL_CTX_use_certificate_chain_file(ev_data->ssl_ctx,
+                    tls_cert_file) != 1) {
+                log_ssl_error();
+                goto error;
+            }
+
+            /* Pass in the server private key */
+            if (SSL_CTX_use_PrivateKey_file(ev_data->ssl_ctx,
+                    tls_key_file, SSL_FILETYPE_PEM) != 1) {
+                log_ssl_error();
+                goto error;
+            }
+
+            // Load trusted root authorities ??
+
+            /* Create SSL from socket */
+            SSL *cSSL = SSL_new(ev_data->ssl_ctx);
+            SSL_set_fd(cSSL, ev_data->listen_fd);
+
+        }
+#endif
     }
 
     return ev_data;
@@ -120,6 +159,12 @@ error:
 
     struct_array_free(ev_data->all_header_fields, true);
     struct_array_free(ev_data->all_header_values, true);
+
+#if ENABLE_HTTPS
+        if (is_tls) {
+            SSL_CTX_free(ev_data->ssl_ctx);
+        }
+#endif
 
     free(ev_data);
     return NULL;
@@ -201,6 +246,12 @@ void free_event_data(struct event_data *ev) {
 
         struct_array_free(ev->all_header_fields, true);
         struct_array_free(ev->all_header_values, true);
+
+#if ENABLE_HTTPS
+        if (ev->conn_info->is_tls) {
+            SSL_CTX_free(ev->ssl_ctx);
+        }
+#endif
 
         free(ev);
     }

@@ -44,9 +44,13 @@
             "HTTPS port on which shim should listen") \
     XX(3, "server-tls-port", true, ENABLE_HTTPS, server_tls_port_str, \
             "port of listening HTTPS server") \
+    XX(4, "tls-cert", true, ENABLE_HTTPS, tls_cert_file, \
+            "PEM file with TLS certificate chain") \
+    XX(5, "tls-key", true, ENABLE_HTTPS, tls_key_file, \
+            "PEM file with server private key") \
     \
     /* Optional args */ \
-    XX(4, "error-page", false, true, error_page_file, \
+    XX(6, "error-page", false, true, error_page_file, \
             "file containing contents for error page")
 
 #define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
@@ -67,12 +71,19 @@
 struct variable_enabled {
     char **variable;
     bool enabled;
+    bool required;
 };
 #define ARG_VARIABLE_LAMBDA(index, name, required, enabled, var, description) \
-    {&var, enabled},
+    {&var, enabled, required},
 
 #define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
     log_dbg("  %s=%s\n", name, var ? var : "NULL");
+
+
+/* Global variables */
+extern char *tls_cert_file;
+extern char *tls_key_file;
+
 
 /* Function prototypes */
 
@@ -80,11 +91,12 @@ struct variable_enabled {
 void init_structures(char *error_page_file);
 void init_page_conf();
 void init_ssl();
+void free_ssl();
 
 /* Event handlers */
-void handle_event(int efd, struct epoll_event *ev, int sfd);
+void handle_event(int efd, struct epoll_event *ev, int sfd, int sfd_tls);
 int handle_client_server_event(struct epoll_event *ev);
-int handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd, bool is_tls);
 void sigint_handler(int dummy);
 
 /* Feature checks */

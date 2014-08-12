@@ -11,6 +11,7 @@ SHIM_SRC = shim.c shim.h http_parser.c http_parser.h \
     struct_array.c struct_array.h
 SHIM_OBJ = shim.o http_parser.o bytearray.o http_callbacks.o session.o \
 	http_util.o net_util.o shim_struct.o config.o struct_array.o
+LDLIBS = -lssl -lcrypto
 
 # Set CROSS_COMPILE variable if needed when running make
 # Example: make CROSS_COMPILE=arm-linux-
@@ -42,7 +43,7 @@ shim-trace: $(SHIM_SRC) trace.c
 	$(CC) shim.o http_parser.o trace.o -o shim-trace
 
 $(BIN_NORMAL): $(SHIM_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
 shim.o: shim.c shim.h config.h log.h
 bytearray.o: bytearray.c bytearray.h
