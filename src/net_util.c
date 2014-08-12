@@ -142,3 +142,12 @@ int sendall(int sockfd, const void *buf, size_t len) {
     }
     return 0;
 }
+
+/* Close file descriptor fd if it is greater than zero. Returns return value
+ * of close if fd was closed, otherwise returns 0. */
+int close_fd_if_valid(int fd) {
+    if (fd > 0) {
+        return close(fd);
+    }
+    return 0;
+}

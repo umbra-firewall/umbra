@@ -129,6 +129,6 @@ bool is_conn_cancelled(struct event_data *ev_data);
 void cancel_connection(struct event_data *ev_data);
 int fill_rand_bytes(char *buf, size_t len);
 void print_usage(char **argv);
-void parse_args(int argc, char **argv);
+void parse_program_arguments(int argc, char **argv);
 
 #endif

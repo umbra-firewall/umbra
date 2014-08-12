@@ -212,12 +212,12 @@ void free_connection_info(struct connection_info *ci) {
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
         if (ci->client_ev_data) {
             int listen_fd = ci->client_ev_data->listen_fd;
-            if (listen_fd && close(listen_fd)) {
+            if (listen_fd && close(listen_fd) != 0) {
                 perror("close");
             }
 
             int send_fd = ci->client_ev_data->send_fd;
-            if (send_fd && close(send_fd)) {
+            if (send_fd && close(send_fd) != 0) {
                 perror("close");
             }
             free_event_data(ci->client_ev_data);

@@ -224,7 +224,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     while (1) {
         struct sockaddr in_addr;
         socklen_t in_len;
-        int infd, outfd;
+        int infd = 0, outfd = 0;
         char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 
         in_len = sizeof(in_addr);
@@ -243,38 +243,43 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         s = getnameinfo(&in_addr, in_len, hbuf, sizeof(hbuf), sbuf,
                 sizeof(sbuf),
                 NI_NUMERICHOST | NI_NUMERICSERV);
-        if (s == 0) {
-            log_trace("Accepted connection on descriptor %d "
-                    "(host=%s, port=%s)\n",
-                    infd, hbuf, sbuf);
+        if (s < 0) {
+            perror("getnameinfo");
+            goto error;
         }
+
+        log_trace("Accepted connection on descriptor %d (host=%s, port=%s)\n",
+                infd, hbuf, sbuf);
 
         /* Make the incoming socket non-blocking and add it to the
          list of fds to monitor. */
         s = make_socket_non_blocking(infd);
         if (s < 0) {
             log_error("Could not make new socket non-blocking\n");
-            return -1;
+            goto error;
         }
 
         /* Create proxy socket to server */
         outfd = create_and_connect(server_http_port_str);
         if (outfd < 0) {
-            return -1;
+            goto error;
         }
 
         s = make_socket_non_blocking(outfd);
         if (s < 0) {
             log_error("Could not make forward socket non-blocking\n");
-            return -1;
+            goto error;
         }
 
         /* Allocate data */
         conn_info = init_conn_info(infd, outfd);
         if (conn_info == NULL) {
             log_error("init_conn_info() failed");
-            return -1;
+            goto error;
         }
+        infd = 0;
+        outfd = 0;
+
 
         client_event.data.ptr = conn_info->client_ev_data;
         client_event.events = EPOLLIN | EPOLLET;
@@ -285,14 +290,19 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &client_event);
         if (s == -1) {
             perror("epoll_ctl");
-            return -1;
+            goto error;
         }
 
         s = epoll_ctl(efd, EPOLL_CTL_ADD, outfd, &server_event);
         if (s == -1) {
             perror("epoll_ctl");
-            return -1;
+            goto error;
         }
+
+error:
+    close_fd_if_valid(infd);
+    close_fd_if_valid(outfd);
+    return -1;
     }
 
     return 0;
@@ -1029,7 +1039,7 @@ void print_usage(char **argv) {
 }
 
 /* Parse program arguments */
-void parse_args(int argc, char **argv) {
+void parse_program_arguments(int argc, char **argv) {
     int c;
 
     struct option long_options[] = {
@@ -1075,7 +1085,7 @@ void parse_args(int argc, char **argv) {
 
     bool args_ok = shim_http_port_str && server_http_port_str;
 #if ENABLE_HTTPS
-    args_ok &= shim_tls_port_str || server_tls_port_str;
+    args_ok &= shim_tls_port_str && server_tls_port_str;
 #endif
 
     if (!args_ok) {
@@ -1087,15 +1097,67 @@ void parse_args(int argc, char **argv) {
     ARGUMENT_MAP(PRINT_ARGS_LAMBDA);
 }
 
+/* Set up non-blocking listener on port */
+int set_up_socket_listener(char *port_str) {
+    int s, sfd;
+
+    sfd = create_and_bind(port_str);
+    if (sfd == -1) {
+        return -1;
+    }
+
+    s = make_socket_non_blocking(sfd);
+    if (s == -1) {
+        return -1;
+    }
+
+    s = listen(sfd, SOMAXCONN);
+    if (s == -1) {
+        perror("listen");
+        return -1;
+    }
+
+    return sfd;
+}
+
+int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
+    int s;
+
+    e->data.ptr = calloc(1, sizeof(struct event_data));
+    if (e->data.ptr == NULL) {
+        perror("calloc");
+        return -1;
+    }
+
+    ((struct event_data *) e->data.ptr)->listen_fd = sfd;
+
+    e->events = EPOLLIN | EPOLLET;
+    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, e);
+    if (s == -1) {
+        perror("epoll_ctl");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     int sfd_http, s;
     int efd;
-    struct epoll_event event;
+    struct epoll_event event_http;
     struct epoll_event *events;
+#if ENABLE_HTTPS
+    int sfd_tls;
+    struct epoll_event event_tls;
+#endif
 
-    memset(&event, 0, sizeof(struct epoll_event));
+    memset(&event_http, 0, sizeof(struct epoll_event));
 
-    parse_args(argc, argv);
+#if ENABLE_HTTPS
+    memset(&event_tls, 0, sizeof(struct epoll_event));
+#endif
+
+    parse_program_arguments(argc, argv);
 
     if (signal(SIGINT, sigint_handler) < 0) {
         perror("signal");
@@ -1104,22 +1166,19 @@ int main(int argc, char *argv[]) {
 
     init_structures(error_page_file);
 
-    /* Set up listener */
-    sfd_http = create_and_bind(shim_http_port_str);
-    if (sfd_http == -1) {
+    /* Set up HTTP listener */
+    sfd_http = set_up_socket_listener(shim_http_port_str);
+    if (sfd_http < 0) {
         abort();
     }
 
-    s = make_socket_non_blocking(sfd_http);
-    if (s == -1) {
+#if ENABLE_HTTPS
+    /* Set up HTTPS listener */
+    sfd_tls = set_up_socket_listener(shim_tls_port_str);
+    if (sfd_tls == -1) {
         abort();
     }
-
-    s = listen(sfd_http, SOMAXCONN);
-    if (s == -1) {
-        perror("listen");
-        abort();
-    }
+#endif
 
     efd = epoll_create(20);
     if (efd == -1) {
@@ -1127,20 +1186,8 @@ int main(int argc, char *argv[]) {
         abort();
     }
 
-    event.data.ptr = calloc(1, sizeof(struct event_data));
-    if (event.data.ptr == NULL) {
-        perror("calloc");
-        abort();
-    }
+    init_listen_event_data(&event_http, efd, sfd_http);
 
-    ((struct event_data *) event.data.ptr)->listen_fd = sfd_http;
-
-    event.events = EPOLLIN | EPOLLET;
-    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd_http, &event);
-    if (s == -1) {
-        perror("epoll_ctl");
-        abort();
-    }
 
     /* Buffer where events are returned */
     events = calloc(MAXEVENTS, sizeof(struct epoll_event));
@@ -1176,7 +1223,7 @@ int main(int argc, char *argv[]) {
 
     close(efd);
     free(events);
-    free(event.data.ptr);
+    free(event_http.data.ptr);
     free(error_page_buf);
 
     close(sfd_http);

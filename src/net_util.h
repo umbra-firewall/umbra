@@ -6,5 +6,6 @@ int make_socket_non_blocking(int sfd);
 int create_and_bind(char *port);
 int create_and_connect(char *port);
 int sendall(int sockfd, const void *buf, size_t len);
+int close_fd_if_valid(int fd);
 
 #endif
