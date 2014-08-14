@@ -18,7 +18,7 @@ LDLIBS = -lssl -lcrypto
 CC := $(CROSS_COMPILE)$(CC)
 
 # CFLAGS versions
-CFLAGS = -fstack-protector -Wall
+CFLAGS += -Wall
 CFLAGS_DEBUG = $(CFLAGS) -g -DDEBUG
 CFLAGS_RELEASE = $(CFLAGS) -O2
 CFLAGS_TRACE = $(CFLAGS) -O0 -finstrument-functions -g -DDEBUG
