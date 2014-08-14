@@ -21,8 +21,6 @@ int on_headers_complete_cb(http_parser *p) {
     /* Check last header pair */
     if (ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
-
-        /* We are done with tracking headers */
     }
 
     if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
@@ -94,6 +92,7 @@ int on_message_complete_cb(http_parser *p) {
 }
 
 int on_url_cb(http_parser *p, const char *at, size_t length) {
+    log_trace("** URL cb: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
 
     log_trace("Method: %s\n", http_method_str(p->method));
@@ -112,7 +111,7 @@ int on_status_cb(http_parser *p, const char *at, size_t length) {
 }
 
 int on_header_field_cb(http_parser *p, const char *at, size_t length) {
-    //log_trace("** Header field: %.*s\n", (int)length, at);
+    log_trace("** Header field: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
 
 #if ENABLE_HEADER_FIELD_LEN_CHECK
@@ -136,7 +135,7 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
 
 
 int on_header_value_cb(http_parser *p, const char *at, size_t length) {
-    //log_trace("** Header value: %.*s\n", (int)length, at);
+    log_trace("** Header value: %.*s\n", (int)length, at);
     struct event_data *ev_data = (struct event_data *) p->data;
 
 #if ENABLE_HEADER_VALUE_LEN_CHECK

@@ -29,16 +29,24 @@ struct event_data {
     bytearray_t *headers_cache;
 
 #if ENABLE_SESSION_TRACKING
-    bytearray_t *cookie_header_value; /* Do not free */
-    bytearray_t *content_length_header_value; /* Do not free */
+    /* Do not free; references to members of all_header struct_array */
+    bytearray_t *cookie_header_value_ref;
+    bytearray_t *content_length_header_value_ref;
+
     struct_array_t *cookie_array;
 #endif
 
+    /* Current header field/value */
     bytearray_t *header_field;
     bytearray_t *header_value;
+
+    /* Array of all header fields/values */
     struct_array_t *all_header_fields;
     struct_array_t *all_header_values;
+
     event_t type : 8;
+
+    /* Boolean values */
     bool is_cancelled : 1;
     bool msg_begun : 1;
     bool headers_complete : 1;
@@ -46,6 +54,7 @@ struct event_data {
     bool just_visited_header_field : 1;
     bool got_eagain : 1;
     bool sent_js_snippet : 1;
+    bool headers_have_been_sent : 1;
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;

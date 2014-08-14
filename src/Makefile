@@ -17,9 +17,10 @@ SHIM_OBJ = shim.o http_parser.o bytearray.o http_callbacks.o session.o \
 CC := $(CROSS_COMPILE)$(CC)
 
 # CFLAGS versions
-CFLAGS_DEBUG = -Wall -g -DDEBUG
-CFLAGS_RELEASE = -Wall -O2
-CFLAGS_TRACE = -Wall -O0 -finstrument-functions -g -DDEBUG
+CFLAGS = -fstack-protector -Wall
+CFLAGS_DEBUG = $(CFLAGS) -g -DDEBUG
+CFLAGS_RELEASE = $(CFLAGS) -O2
+CFLAGS_TRACE = $(CFLAGS) -O0 -finstrument-functions -g -DDEBUG
 
 .PHONY: all debug trace release clean dist-clean
 
