@@ -16,14 +16,14 @@ void find_session_from_cookie(struct event_data *ev_data) {
     /* Cookie should be NUL terminated from check_header_pair(),
      * so C string functions can be used. */
 
-    if (ev_data->cookie_header_value == NULL) {;
+    if (ev_data->cookie_header_value_ref == NULL) {;
         log_trace("No Cookie header found; so no SESSION_ID\n");
         return;
     }
 
     char *sess_id = extract_sessid_parse_cookie(
-            ev_data->cookie_header_value->data,
-            ev_data->cookie_header_value->len, ev_data);
+            ev_data->cookie_header_value_ref->data,
+            ev_data->cookie_header_value_ref->len, ev_data);
     ev_data->found_shim_session_cookie = (sess_id != NULL);
 
     if (!ev_data->found_shim_session_cookie) {
@@ -296,11 +296,18 @@ error:
 /* Modify Content-Length header for changes in body length.
  * Returns 0 on success, -1 otherwise. */
 int set_new_content_length(struct event_data *ev_data) {
+    if (!ev_data->content_length_specified) {
+        log_dbg("Not changing Content-Length header because it was not sent\n");
+        return 0;
+    }
+
     size_t additional_length = 0;
 
     /* Account for JS snippet length that is to be sent. */
     if (ev_data->type == SERVER_LISTENER
             && ev_data->conn_info->page_match->has_csrf_form) {
+        log_dbg("  Accounting for JS snippet len %zd\n",
+                INSERT_HIDDEN_TOKEN_JS_STRLEN);
         additional_length += INSERT_HIDDEN_TOKEN_JS_STRLEN;
     }
 
@@ -315,21 +322,21 @@ int set_new_content_length(struct event_data *ev_data) {
         log_trace("Not changing Content-Length that was found\n");
     } else {
         log_trace("Replacing Content-Length: original=%s\n",
-                ev_data->content_length_header_value->data);
+                ev_data->content_length_header_value_ref->data);
         /* Read original value */
         size_t original_len;
-        if (sscanf(ev_data->content_length_header_value->data, "%zd",
+        if (sscanf(ev_data->content_length_header_value_ref->data, "%zd",
                 &original_len) != 1) {
             log_error("Could not read Content-Length value: %.*s\n",
-                    (int) ev_data->content_length_header_value->len,
-                    ev_data->content_length_header_value->data);
+                    (int) ev_data->content_length_header_value_ref->len,
+                    ev_data->content_length_header_value_ref->data);
             goto error;
         }
 
         size_t new_len = original_len + additional_length;
 
         /* Write new value to string */
-        char new_len_buf[ev_data->content_length_header_value->len + 10];
+        char new_len_buf[ev_data->content_length_header_value_ref->len + 10];
         int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
                 "%zd", new_len);
         if (new_len_buf_len < 0) {
@@ -339,16 +346,16 @@ int set_new_content_length(struct event_data *ev_data) {
         }
 
         /* Write new value to bytearray */
-        if (bytearray_clear(ev_data->content_length_header_value) < 0) {
+        if (bytearray_clear(ev_data->content_length_header_value_ref) < 0) {
             goto error;
         }
-        if (bytearray_append(ev_data->content_length_header_value, new_len_buf,
+        if (bytearray_append(ev_data->content_length_header_value_ref, new_len_buf,
                 new_len_buf_len) < 0) {
             goto error;
         }
 
         log_trace("  Replacing Content-Length: new=%s\n",
-                ev_data->content_length_header_value->data);
+                ev_data->content_length_header_value_ref->data);
     }
 
     return 0;
@@ -364,7 +371,7 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
 
     log_trace("Removing shim session ID from cookie header value\n");
 
-    bytearray_t *c = ev_data->cookie_header_value;
+    bytearray_t *c = ev_data->cookie_header_value_ref;
 
     if (bytearray_clear(c) < 0) {
         cancel_connection(ev_data);
@@ -411,7 +418,7 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
             }
         }
 
-        log_dbg("New cookie: \"%s\"\n", ev_data->cookie_header_value->data);
+        log_dbg("New cookie: \"%s\"\n", ev_data->cookie_header_value_ref->data);
     }
 
     return 0;

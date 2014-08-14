@@ -142,6 +142,8 @@ int send_http_headers(struct event_data *ev_data) {
     char reason_phrase[MAX_HTTP_REASON_PHRASE_LEN + 1];
     size_t phrase_len;
 
+    log_trace("Preparing buffer with all headers to send\n");
+
     /* Assert that there are the same number of header fields and values */
     if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
         log_error("The number of header fields != number of values\n");
@@ -191,7 +193,7 @@ int send_http_headers(struct event_data *ev_data) {
 
 
     /* Add first line to send buffer */
-    log_dbg("Adding first line\n");
+    log_dbg("  Adding first line\n");
     if (ev_data->type == CLIENT_LISTENER) {
         rc = snprintf(p, header_len_estimate, "%s %.*s HTTP/%d.%d%s",
                 http_method_str(ev_data->parser.method),
@@ -251,6 +253,7 @@ int send_http_headers(struct event_data *ev_data) {
     header_len_estimate -= newline_len;
 
     /* Send buffer */
+    log_trace("Sending header buffer\n");
     if (sendall(ev_data->send_fd, send_buf, send_buf_len) < 0) {
         goto error;
     }

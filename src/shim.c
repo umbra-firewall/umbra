@@ -125,7 +125,7 @@ void check_header_pair(struct event_data *ev_data) {
                 && strcasecmp(COOKIE_HEADER, field) == 0) {
             log_trace("Found Cookie header\n");
             /* Set pointer to cookie value */
-            ev_data->cookie_header_value = ev_data->header_value;
+            ev_data->cookie_header_value_ref = ev_data->header_value;
         }
 #endif
     } else {
@@ -158,7 +158,7 @@ void check_header_pair(struct event_data *ev_data) {
         /* Handle Content-Length */
         log_dbg("Content-Length specified\n");
         ev_data->content_length_specified = true;
-        ev_data->content_length_header_value = ev_data->header_value;
+        ev_data->content_length_header_value_ref = ev_data->header_value;
     }
 #endif
 
@@ -180,6 +180,18 @@ void check_header_pair(struct event_data *ev_data) {
         return;
     }
     ev_data->header_value = NULL;
+
+    /* Allocate new header field/value bytearrays */
+    ev_data->header_field = bytearray_new();
+    if (ev_data->header_field == NULL) {
+        cancel_connection(ev_data);
+        return;
+    }
+    ev_data->header_value = bytearray_new();
+    if (ev_data->header_field == NULL) {
+        cancel_connection(ev_data);
+        return;
+    }
 }
 
 
@@ -193,18 +205,6 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
     if (is_header_field && !ev_data->just_visited_header_field
             && ev_data->header_field->len != 0) {
         check_header_pair(ev_data);
-
-        ev_data->header_field = bytearray_new();
-        if (ev_data->header_field == NULL) {
-            cancel_connection(ev_data);
-            return;
-        }
-
-        ev_data->header_value = bytearray_new();
-        if (ev_data->header_field == NULL) {
-            cancel_connection(ev_data);
-            return;
-        }
     }
 
     if (is_header_field) {
@@ -741,7 +741,7 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 
         /* Do not have all headers cached yet */
-        if (headers_cache) {
+        if (!ev_data->headers_have_been_sent) {
             log_dbg("Caching message headers\n");
             if (bytearray_append(headers_cache, buf, count) < 0) {
                 log_error("bytearray_append failed\n");
@@ -780,9 +780,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                         ev_data, parser_settings, true);
 
                 /* Done with the headers cache */
-                bytearray_free(headers_cache);
-                headers_cache = NULL;
-                ev_data->headers_cache = NULL;
+                ev_data->headers_have_been_sent = true;
                 continue;
             }
 
@@ -929,14 +927,13 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
 
         /* Remove SHIM_SESSID cookie from Cookie header */
         if (ev_data->type == CLIENT_LISTENER
-                && ev_data->cookie_header_value != NULL
+                && ev_data->cookie_header_value_ref != NULL
                 && remove_shim_sessid_cookie(ev_data) < 0) {
             return 1;
         }
 
         /* Modify Content-Length header as needed */
-        if (ev_data->content_length_specified
-                && set_new_content_length(ev_data) < 0) {
+        if (set_new_content_length(ev_data) < 0) {
             return 1;
         }
 #endif

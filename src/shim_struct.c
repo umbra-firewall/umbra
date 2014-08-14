@@ -54,95 +54,99 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     log_trace("Initializing new event_data\n");
     struct event_data *ev_data = calloc(1, sizeof(struct event_data));
 
-    if (ev_data != NULL) {
-        ev_data->type = type;
-        ev_data->listen_fd = listen_fd;
-        ev_data->send_fd = send_fd;
-        ev_data->conn_info = conn_info;
-        ev_data->http_msg_newline = NULL;
+    if (ev_data == NULL) {
+        return NULL;
+    }
 
-        if ((ev_data->url = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
+    ev_data->type = type;
+    ev_data->listen_fd = listen_fd;
+    ev_data->send_fd = send_fd;
+    ev_data->conn_info = conn_info;
+    ev_data->http_msg_newline = NULL;
 
-        if ((ev_data->body = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
+    if ((ev_data->url = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
+        goto error;
+    }
+
+    if ((ev_data->body = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
+        goto error;
+    }
+
+    if ((ev_data->headers_cache = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
+        goto error;
+    }
 
 #if ENABLE_SESSION_TRACKING
-        ev_data->cookie_header_value = NULL;
-        ev_data->content_length_header_value = NULL;
+    ev_data->cookie_header_value_ref = NULL;
+    ev_data->content_length_header_value_ref = NULL;
 
-        if ((ev_data->headers_cache = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
-
-        if ((ev_data->cookie_array = struct_array_new()) == NULL) {
-            log_warn("Allocating new struct array failed\n");
-            goto error;
-        }
+    if ((ev_data->cookie_array = struct_array_new()) == NULL) {
+        log_warn("Allocating new struct array failed\n");
+        goto error;
+    }
 
 #endif
 
-        if ((ev_data->header_field = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
+    if ((ev_data->header_field = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
+        goto error;
+    }
 
-        if ((ev_data->header_value = bytearray_new()) == NULL) {
-            log_warn("Allocating new bytearray failed\n");
-            goto error;
-        }
+    if ((ev_data->header_value = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
+        goto error;
+    }
 
-        if ((ev_data->all_header_fields = struct_array_new()) == NULL) {
-            goto error;
-        }
+    if ((ev_data->all_header_fields = struct_array_new()) == NULL) {
+        goto error;
+    }
 
-        if ((ev_data->all_header_values = struct_array_new()) == NULL) {
-            goto error;
-        }
-
-        http_parser_init(&ev_data->parser, parser_type);
-        ev_data->parser.data = ev_data;
+    http_parser_init(&ev_data->parser, parser_type);
+    ev_data->parser.data = ev_data;
 
 #if ENABLE_HTTPS
-        if (is_tls) {
-            //@Todo(Travis) make the TLS version configurable
-            ev_data->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
-            if (ev_data->ssl_ctx == NULL) {
-                log_ssl_error();
-                goto error;
-            }
-
-            /* Generate new DH key each time */
-            SSL_CTX_set_options(ev_data->ssl_ctx, SSL_OP_SINGLE_DH_USE);
-
-            /* Pass in the server certificate chain file */
-            if (SSL_CTX_use_certificate_chain_file(ev_data->ssl_ctx,
-                    tls_cert_file) != 1) {
-                log_ssl_error();
-                goto error;
-            }
-
-            /* Pass in the server private key */
-            if (SSL_CTX_use_PrivateKey_file(ev_data->ssl_ctx,
-                    tls_key_file, SSL_FILETYPE_PEM) != 1) {
-                log_ssl_error();
-                goto error;
-            }
-
-            // Load trusted root authorities ??
-
-            /* Create SSL from socket */
-            SSL *cSSL = SSL_new(ev_data->ssl_ctx);
-            SSL_set_fd(cSSL, ev_data->listen_fd);
-
+    if (is_tls) {
+        //@Todo(Travis) make the TLS version configurable
+        ev_data->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
+        if (ev_data->ssl_ctx == NULL) {
+            log_ssl_error();
+            goto error;
         }
-#endif
+
+        /* Generate new DH key each time */
+        SSL_CTX_set_options(ev_data->ssl_ctx, SSL_OP_SINGLE_DH_USE);
+
+        /* Pass in the server certificate chain file */
+        if (SSL_CTX_use_certificate_chain_file(ev_data->ssl_ctx,
+                        tls_cert_file) != 1) {
+            log_ssl_error();
+            goto error;
+        }
+
+        /* Pass in the server private key */
+        if (SSL_CTX_use_PrivateKey_file(ev_data->ssl_ctx,
+                        tls_key_file, SSL_FILETYPE_PEM) != 1) {
+            log_ssl_error();
+            goto error;
+        }
+
+        // Load trusted root authorities ??
+
+        /* Create SSL from socket */
+        SSL *cSSL = SSL_new(ev_data->ssl_ctx);
+        SSL_set_fd(cSSL, ev_data->listen_fd);
     }
+#endif
+
+    if ((ev_data->all_header_values = struct_array_new()) == NULL) {
+        goto error;
+    }
+
+    http_parser_init(&ev_data->parser, parser_type);
+    ev_data->parser.data = ev_data;
 
     return ev_data;
 
@@ -150,9 +154,7 @@ error:
     bytearray_free(ev_data->url);
     bytearray_free(ev_data->body);
 
-#if ENABLE_SESSION_TRACKING
     bytearray_free(ev_data->headers_cache);
-#endif
 
     bytearray_free(ev_data->header_field);
     bytearray_free(ev_data->header_value);
@@ -175,18 +177,21 @@ error:
  * cleared. */
 void reset_event_data(struct event_data *ev) {
     if (ev == NULL) {
-        log_warn("Tried to reset NULL event_data\n");
+        return;
     }
+
+    http_parser_init(&ev->parser, ev->parser.type);
 
     ev->http_msg_newline = NULL;
 
     bytearray_clear(ev->url);
     bytearray_clear(ev->body);
+    bytearray_clear(ev->headers_cache);
 
 #if ENABLE_SESSION_TRACKING
-    ev->cookie_header_value = NULL;
-    ev->content_length_header_value = NULL;
-    bytearray_clear(ev->headers_cache);
+    ev->cookie_header_value_ref = NULL;
+    ev->content_length_header_value_ref = NULL;
+
     struct_array_clear(ev->cookie_array, true);
 #endif
 
@@ -203,6 +208,7 @@ void reset_event_data(struct event_data *ev) {
     ev->just_visited_header_field = false;
     ev->got_eagain = false;
     ev->sent_js_snippet = false;
+    ev->headers_have_been_sent = false;
 
 #if ENABLE_SESSION_TRACKING
     ev->content_length_specified = false;
@@ -216,7 +222,7 @@ void reset_event_data(struct event_data *ev) {
 
 /* Reset state of connection structure (including its event_data structures) */
 void reset_connection_info(struct connection_info *ci) {
-    log_trace("Resseting connection info of %p\n", ci);
+    log_trace("Reseting connection info of %p\n", ci);
 
     if (ci == NULL) {
         return;
@@ -232,29 +238,32 @@ void reset_connection_info(struct connection_info *ci) {
 /* Free memory associated with event data */
 void free_event_data(struct event_data *ev) {
     log_trace("Freeing event data %p\n", ev);
-    if (ev != NULL) {
-        bytearray_free(ev->url);
-        bytearray_free(ev->body);
+
+    if (ev == NULL) {
+        return;
+    }
+
+    bytearray_free(ev->url);
+    bytearray_free(ev->body);
+    bytearray_free(ev->headers_cache);
 
 #if ENABLE_SESSION_TRACKING
-        bytearray_free(ev->headers_cache);
-        struct_array_free(ev->cookie_array, true);
+    struct_array_free(ev->cookie_array, true);
 #endif
 
-        bytearray_free(ev->header_field);
-        bytearray_free(ev->header_value);
+    bytearray_free(ev->header_field);
+    bytearray_free(ev->header_value);
 
-        struct_array_free(ev->all_header_fields, true);
-        struct_array_free(ev->all_header_values, true);
+    struct_array_free(ev->all_header_fields, true);
+    struct_array_free(ev->all_header_values, true);
 
 #if ENABLE_HTTPS
-        if (ev->conn_info->is_tls) {
-            SSL_CTX_free(ev->ssl_ctx);
-        }
+    if (ev->conn_info->is_tls) {
+        SSL_CTX_free(ev->ssl_ctx);
+    }
 #endif
 
-        free(ev);
-    }
+    free(ev);
 }
 
 /* Free memory and close sockets associated with connection structure */
