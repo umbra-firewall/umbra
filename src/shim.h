@@ -23,7 +23,7 @@
 
 /* Macros */
 
-#define SHIM_VERSION "v0.5.6"
+#define SHIM_VERSION "v0.5.7"
 
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
