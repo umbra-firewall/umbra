@@ -19,6 +19,7 @@ bytearray_t* bytearray_new();
 bytearray_t* bytearray_new_copy(char *data, size_t len);
 void bytearray_free(bytearray_t *ba);
 int bytearray_append(bytearray_t *ba, const char *data, size_t len);
+int bytearray_append_ba(bytearray_t *ba, bytearray_t *to_append);
 int bytearray_nul_terminate(bytearray_t *ba);
 int bytearray_truncate_front(bytearray_t *ba, size_t trunc_amt);
 int bytearray_truncate_back(bytearray_t *ba, size_t trunc_amt);
