@@ -1,0 +1,4 @@
+check_all
+check_all_dbg
+.deps
+*.o
