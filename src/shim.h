@@ -23,7 +23,7 @@
 
 /* Macros */
 
-#define SHIM_VERSION "v0.5.5"
+#define SHIM_VERSION "v0.5.7"
 
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
@@ -137,8 +137,6 @@ int flush_server_event(struct event_data *server_ev_data);
 
 /* Util functions */
 bool is_hex_digit(char c);
-bool is_conn_cancelled(struct event_data *ev_data);
-void cancel_connection(struct event_data *ev_data);
 int fill_rand_bytes(char *buf, size_t len);
 void print_usage(char **argv);
 void parse_program_arguments(int argc, char **argv);

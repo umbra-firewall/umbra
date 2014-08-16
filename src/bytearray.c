@@ -69,6 +69,15 @@ int bytearray_append(bytearray_t *ba, const char *data, size_t len) {
     return 0;
 }
 
+int bytearray_append_ba(bytearray_t *ba, bytearray_t *to_append) {
+    if (to_append == NULL) {
+        log_warn("Tried to append NULL bytearray\n");
+        return -1;
+    }
+
+    return bytearray_append(ba, to_append->data, to_append->len);
+}
+
 int bytearray_nul_terminate(bytearray_t *ba) {
     int rc = 0;
     if (ba == NULL) {

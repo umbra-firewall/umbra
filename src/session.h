@@ -80,6 +80,7 @@ struct connection_info;
 void find_session_from_cookie(struct event_data *ev_data);
 char *extract_sessid_parse_cookie(char *cookie_header_value,
         size_t cookie_header_len, struct event_data *ev_data);
+int add_cookie_name_value(struct event_data *ev_data, bytearray_t *cp);
 struct session *get_conn_session(struct connection_info *conn_info);
 struct session *new_session();
 bool is_session_entry_clear(struct session *sess);
@@ -92,5 +93,6 @@ int get_num_active_sessions();
 int add_set_cookie_header(struct event_data *ev_data);
 int set_new_content_length(struct event_data *ev_data);
 int remove_shim_sessid_cookie(struct event_data *ev_data);
+int add_cookie_piece(bytearray_t *c, int i, struct event_data *ev_data);
 
 #endif
