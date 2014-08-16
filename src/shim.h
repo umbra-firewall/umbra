@@ -84,8 +84,6 @@ int flush_server_event(struct event_data *server_ev_data);
 
 /* Util functions */
 bool is_hex_digit(char c);
-bool is_conn_cancelled(struct event_data *ev_data);
-void cancel_connection(struct event_data *ev_data);
 int fill_rand_bytes(char *buf, size_t len);
 
 

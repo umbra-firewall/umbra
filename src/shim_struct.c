@@ -79,7 +79,12 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     ev_data->cookie_header_value_ref = NULL;
     ev_data->content_length_header_value_ref = NULL;
 
-    if ((ev_data->cookie_array = struct_array_new()) == NULL) {
+    if ((ev_data->cookie_name_array = struct_array_new()) == NULL) {
+        log_warn("Allocating new struct array failed\n");
+        goto error;
+    }
+
+    if ((ev_data->cookie_value_array = struct_array_new()) == NULL) {
         log_warn("Allocating new struct array failed\n");
         goto error;
     }
@@ -115,6 +120,11 @@ error:
 
     bytearray_free(ev_data->headers_cache);
 
+#if ENABLE_SESSION_TRACKING
+    struct_array_free(ev_data->cookie_name_array, true);
+    struct_array_free(ev_data->cookie_value_array, true);
+#endif
+
     bytearray_free(ev_data->header_field);
     bytearray_free(ev_data->header_value);
 
@@ -145,7 +155,8 @@ void reset_event_data(struct event_data *ev) {
     ev->cookie_header_value_ref = NULL;
     ev->content_length_header_value_ref = NULL;
 
-    struct_array_clear(ev->cookie_array, true);
+    struct_array_clear(ev->cookie_name_array, true);
+    struct_array_clear(ev->cookie_value_array, true);
 #endif
 
     bytearray_clear(ev->header_field);
@@ -201,7 +212,8 @@ void free_event_data(struct event_data *ev) {
     bytearray_free(ev->headers_cache);
 
 #if ENABLE_SESSION_TRACKING
-    struct_array_free(ev->cookie_array, true);
+    struct_array_free(ev->cookie_name_array, true);
+    struct_array_free(ev->cookie_value_array, true);
 #endif
 
     bytearray_free(ev->header_field);
@@ -241,4 +253,19 @@ void free_connection_info(struct connection_info *ci) {
 void copy_default_params(struct page_conf *page_conf, struct params *params) {
     params->max_param_len = page_conf->max_param_len;
     params->whitelist = page_conf->whitelist;
+}
+
+/* Set connection to cancelled state */
+void cancel_connection(struct event_data *ev_data) {
+    log_trace("Cancelling connection\n.");
+    ev_data->is_cancelled = true;
+}
+
+/* Returns whether connection is cancelled */
+bool is_conn_cancelled(struct event_data *ev_data) {
+    if (ev_data->is_cancelled) {
+        return true;
+    } else {
+        return false;
+    }
 }

@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include "session.h"
 #include "log.h"
 
@@ -64,22 +65,22 @@ char *extract_sessid_parse_cookie(char *cookie_header_value,
 
     bytearray_t *cookie = bytearray_new();
     if (cookie == NULL) {
-        cancel_connection(ev_data);
-        return NULL;
+        goto error;
     }
 
     if (update_bytearray(cookie, cookie_header_value, cookie_header_len + 1,
             ev_data) < 0) {
-        goto finish;
+        goto error;
     }
 
     char *tok = strtok(cookie_header_value, ";");
+    log_dbg("Cookie pieces:\n");
 
     /* Examine each query parameter */
     while (tok  != NULL) {
         bytearray_t *ba = bytearray_new_copy(tok, strlen(tok));
         if (ba == NULL) {
-            goto finish;
+            goto error;
         }
 
         tok = strstr(tok, SHIM_SESSID_NAME "=");
@@ -92,14 +93,126 @@ char *extract_sessid_parse_cookie(char *cookie_header_value,
             bytearray_free(ba);
         } else {
             /* Only add to array if not SHIM_SESSID */
-            struct_array_add(ev_data->cookie_array, ba);
+            int rc = add_cookie_name_value(ev_data, ba);
+            bytearray_free(ba);
+            if (rc < 0) {
+                goto error;
+            }
         }
         tok = strtok(NULL, ";");
     }
 
-finish:
     bytearray_free(cookie);
     return ret;
+
+error:
+    bytearray_free(cookie);
+    cancel_connection(ev_data);
+    return NULL;
+}
+
+/* Adds cookie name/value string to to cookie name/value arrays */
+int add_cookie_name_value(struct event_data *ev_data, bytearray_t *piece) {
+    char *name = NULL, *value = NULL;
+    size_t name_len = 0, value_len = 0;
+    bytearray_t *na = NULL, *va = NULL;
+
+    if ((na = bytearray_new()) == NULL) {
+        goto error;
+    }
+    if ((va = bytearray_new()) == NULL) {
+        goto error;
+    }
+
+    if (bytearray_nul_terminate(piece) < 0) {
+        goto error;
+    }
+
+    char *eq = strchr(piece->data, '=');
+    char *term;
+    if (eq == NULL) {
+        term = piece->data + piece->len;
+    } else {
+        term = eq;
+    }
+
+    /* Find cookie name (first non-whitespace character) */
+    name = piece->data;
+    while (name != term) {
+        if (!isspace(*name)) {
+            break;
+        }
+        name++;
+    }
+    if (name == term) {
+        log_warn("Could not find cookie name\n");
+        goto error;
+    }
+    name_len = term - name;
+
+    if (bytearray_append(na, name, name_len) < 0) {
+        goto error;
+    }
+
+    /* Find cookie value */
+    if (eq != NULL) {
+        value = eq + 1;
+        bool found_quote = (*value == '"');
+        if (found_quote) {
+            /* Value has quotes */
+            value++;
+            if (value >= piece->data + piece->len) {
+                log_warn("Cookie piece ended too soon\n");
+                goto error;
+            }
+            char *second_quote = strchr(value, '"');
+            if (second_quote == NULL) {
+                log_warn("Cookie piece had only one quote; must have 0 or 2\n");
+                goto error;
+            }
+            value_len = second_quote - value;
+        } else {
+            /* Value does not have quotes */
+            if (*value == '\0') {
+                value_len = 0;
+            } else {
+                char *last_chr = piece->data + piece->len - 1;
+                while (last_chr != value) {
+                    if (!isspace(*last_chr)) {
+                        break;
+                    }
+                    last_chr--;
+                }
+                value_len = last_chr - value + 1;
+            }
+        }
+
+        if (bytearray_append(va, value, value_len) < 0) {
+            goto error;
+        }
+    }
+
+
+    if (struct_array_add(ev_data->cookie_name_array, na) < 0) {
+        goto error;
+    }
+    na = NULL;
+
+    if (struct_array_add(ev_data->cookie_value_array, va) < 0) {
+        goto error;
+    }
+    va = NULL;
+
+    log_dbg("  %.*s=%.*s\n", (int) name_len, name,
+            (int) value_len, value);
+
+    return 0;
+
+error:
+    bytearray_free(na);
+    bytearray_free(va);
+    cancel_connection(ev_data);
+    return -1;
 }
 
 /* Returns session structure associated with connection. If one does not exists,
@@ -369,16 +482,20 @@ error:
 int remove_shim_sessid_cookie(struct event_data *ev_data) {
     int i;
 
-    log_trace("Removing shim session ID from cookie header value\n");
-
     bytearray_t *c = ev_data->cookie_header_value_ref;
 
-    if (bytearray_clear(c) < 0) {
-        cancel_connection(ev_data);
+    if (ev_data->type != CLIENT_LISTENER || c == NULL) {
+        return 0;
+    }
+
+    log_trace("Removing shim session ID from cookie header value\n");
+
+    if (ev_data->cookie_name_array->len != ev_data->cookie_value_array->len) {
+        log_error("Number of cookie names != values\n");
         goto error;
     }
 
-    if (ev_data->found_shim_session_cookie && ev_data->cookie_array->len <= 0) {
+    if (ev_data->cookie_name_array->len <= 0) {
         log_dbg("Removing Cookie header; only has SHIM_SESSID\n");
 
         int cookie_idx = struct_array_find_element_idx(
@@ -399,26 +516,32 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
             goto error;
         }
     } else {
+        /* Build new cookie */
+
         if (bytearray_clear(c) < 0) {
             goto error;
         }
 
-        if (bytearray_append(c, ev_data->cookie_array->data[0]->data,
-                ev_data->cookie_array->data[0]->len) < 0) {
+        /* Add first cookie */
+        if (add_cookie_piece(c, 0, ev_data) < 0) {
             goto error;
         }
 
-        for (i = 1; i < ev_data->cookie_array->len; i++) {
-            if (bytearray_append(c, ";", 1) < 0) {
+        /* Add rest of cookies */
+        for (i = 1; i < ev_data->cookie_name_array->len; i++) {
+            /* Add color delimeter */
+            if (bytearray_append(c, "; ", 2) < 0) {
                 goto error;
             }
-            if (bytearray_append(c, ev_data->cookie_array->data[i]->data,
-                    ev_data->cookie_array->data[i]->len) < 0) {
+
+            if (add_cookie_piece(c, i, ev_data) < 0) {
                 goto error;
             }
         }
 
-        log_dbg("New cookie: \"%s\"\n", ev_data->cookie_header_value_ref->data);
+        log_dbg("New cookie: \"%.*s\"\n",
+                (int) ev_data->cookie_header_value_ref->len,
+                ev_data->cookie_header_value_ref->data);
     }
 
     return 0;
@@ -426,6 +549,31 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
 error:
     cancel_connection(ev_data);
     return -1;
+}
+
+/* Add ith cookie in cookie name/value arrays to bytearray.
+ * Returns 0 on success, -1 otherwise.
+ */
+int add_cookie_piece(bytearray_t *c, int i, struct event_data *ev_data) {
+    if (c == NULL) {
+        return -1;
+    }
+
+    if (bytearray_append_ba(c, ev_data->cookie_name_array->data[i]) < 0) {
+        return -1;
+    }
+
+    /* Only add cookie value and equals sign if value is non-empty */
+    if (ev_data->cookie_value_array->data[i]->len > 0) {
+        if (bytearray_append(c, "=", 1) < 0) {
+            return -1;
+        }
+        if (bytearray_append_ba(c, ev_data->cookie_value_array->data[i]) < 0) {
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 #endif /* ENABLE_SESSION_TRACKING */

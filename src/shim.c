@@ -33,22 +33,6 @@ http_parser_settings server_parser_settings = {
     .on_message_complete = on_message_complete_cb
 };
 
-
-/* Set connection to cancelled state */
-void cancel_connection(struct event_data *ev_data) {
-    log_trace("Cancelling connection\n.");
-    ev_data->is_cancelled = true;
-}
-
-/* Returns whether connection is cancelled */
-bool is_conn_cancelled(struct event_data *ev_data) {
-    if (ev_data->is_cancelled) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
 /*
  * Attempts to find matching page conf. If it cannot find one, it returns a
  * pointer to the default page conf structure.

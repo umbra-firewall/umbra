@@ -33,7 +33,8 @@ struct event_data {
     bytearray_t *cookie_header_value_ref;
     bytearray_t *content_length_header_value_ref;
 
-    struct_array_t *cookie_array;
+    struct_array_t *cookie_name_array;
+    struct_array_t *cookie_value_array;
 #endif
 
     /* Current header field/value */
@@ -84,5 +85,7 @@ void reset_connection_info(struct connection_info *ci);
 void free_event_data(struct event_data *ev);
 void free_connection_info(struct connection_info *ci);
 void copy_default_params(struct page_conf *page_conf, struct params *params);
+bool is_conn_cancelled(struct event_data *ev_data);
+void cancel_connection(struct event_data *ev_data);
 
 #endif

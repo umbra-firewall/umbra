@@ -1,9 +1,5 @@
 BIN_NORMAL = shim shim-dbg
 BIN = $(BIN_NORMAL) shim-trace config_printer
-SRC = shim.c shim.h bytearray.c bytearray.h config_printer.c \
-    http_parser.c http_parser.h http_callbacks.c http_callbacks.h \
-    session.c session.h http_util.c http_util.h net_util.c net_util.h log.h \
-    struct_array.c struct_array.h
 SHIM_SRC = shim.c shim.h http_parser.c http_parser.h \
     bytearray.c bytearray.h http_callbacks.c http_callbacks.h \
     session.c session.h http_util.c http_util.h net_util.c net_util.h \
