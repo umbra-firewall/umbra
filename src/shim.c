@@ -355,12 +355,6 @@ struct params *find_matching_param(char *name, size_t name_len,
     return NULL;
 }
 
-/* Returns whether character corresponds to a hexadecimal digit */
-bool is_hex_digit(char c) {
-    return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f')
-            || ('A' <= c && c <= 'F');
-}
-
 /* Checks if character is allowed by whitelist, cancelling the connection if it
  * is not. Returns -1 on error, otherwise 0. */
 int check_char_whitelist(const char *whitelist, const char c,
@@ -1048,7 +1042,9 @@ void print_usage(char **argv) {
     printf("\n");
 }
 
-/* Parse program arguments */
+/* Parses program arguments, setting the option variables. Returns 0 on success,
+ * -1 otherwise.
+ */
 void parse_program_arguments(int argc, char **argv) {
     int c, i;
 
@@ -1136,6 +1132,9 @@ int set_up_socket_listener(char *port_str) {
     return sfd;
 }
 
+/* Initializes listening epoll_event with socket sfd. Returns 0 on success,
+ * -1 otherwise.
+ */
 int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
     int s;
 

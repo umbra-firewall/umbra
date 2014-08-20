@@ -136,9 +136,10 @@ int check_send_csrf_js_snippet(struct event_data *ev_data);
 int flush_server_event(struct event_data *server_ev_data);
 
 /* Util functions */
-bool is_hex_digit(char c);
 int fill_rand_bytes(char *buf, size_t len);
 void print_usage(char **argv);
 void parse_program_arguments(int argc, char **argv);
+int set_up_socket_listener(char *port_str);
+int init_listen_event_data(struct epoll_event *e, int efd, int sfd);
 
 #endif
