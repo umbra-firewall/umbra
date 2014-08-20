@@ -1012,7 +1012,7 @@ int init_page_conf() {
 int init_ssl_ctx() {
     /* Initialize server context */
     //@Todo(Travis) make the TLS version configurable
-    ssl_ctx_server = SSL_CTX_new(TLSv1_2_server_method());
+    ssl_ctx_server = SSL_CTX_new(TLSv1_server_method());
     if (ssl_ctx_server == NULL) {
         log_ssl_error("Server SSL_CTX_new() failed\n");
         return -1;
@@ -1020,6 +1020,7 @@ int init_ssl_ctx() {
 
     /* Generate new DH key each time */
     SSL_CTX_set_options(ssl_ctx_server, SSL_OP_SINGLE_DH_USE);
+    SSL_CTX_set_options(ssl_ctx_server, SSL_OP_NO_SSLv2);
 
     /* Pass in the server certificate chain file */
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx_server,
@@ -1046,18 +1047,31 @@ int init_ssl_ctx() {
     // Load trusted root authorities ??
 
     /* Initialize client context */
-    ssl_ctx_client = SSL_CTX_new(TLSv1_2_client_method());
+    ssl_ctx_client = SSL_CTX_new(TLSv1_client_method());
     if (ssl_ctx_server == NULL) {
         log_ssl_error("Client SSL_CTX_new() failed\n");
         return -1;
     }
 
+    SSL_CTX_set_options(ssl_ctx_client, SSL_OP_NO_SSLv2);
+
     return 0;
+}
+
+void print_openssl_info() {
+    log_dbg("OpenSSL information:\n");
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_VERSION));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_CFLAGS));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_BUILT_ON));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_PLATFORM));
 }
 
 /* Initialize OpenSSL */
 int init_ssl() {
+    print_openssl_info();
+
     CRYPTO_malloc_init();
+
     SSL_library_init();
     SSL_load_error_strings();
     ERR_load_BIO_strings();
@@ -1079,7 +1093,11 @@ void free_ssl() {
     CONF_modules_unload(1);
     EVP_cleanup();
     CRYPTO_cleanup_all_ex_data();
-    sk_SSL_COMP_free(SSL_COMP_get_compression_methods());
+
+    /* Free ssl_comp_methods stack and its elements */
+    sk_SSL_COMP_pop_free(SSL_COMP_get_compression_methods(),
+            (void (*)(SSL_COMP *) ) CRYPTO_free);
+
     ERR_remove_state(0); /* Free state of current thread */
     ERR_free_strings();
 }
