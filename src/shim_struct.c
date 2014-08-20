@@ -78,7 +78,9 @@ int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls, bool is_server)
                 /* Possible Failure */
                 int err = SSL_get_error(fd_ctx->ssl, rc);
                 if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-                    log_dbg("Other end wants READ/WRITE for %s()\n", func_name);
+                    log_dbg("Other end wants %s for %s()\n",
+                            err == SSL_ERROR_WANT_READ ? "READ" : "WRITE",
+                            func_name);
                     continue;
                 }
                 log_ssl_error("%s() failed\n", func_name);

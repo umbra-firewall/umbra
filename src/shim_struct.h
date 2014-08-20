@@ -91,6 +91,11 @@ struct connection_info {
     struct page_conf *page_match;
 };
 
+
+/* Global variables */
+extern int num_conn_infos;
+
+
 /* Structure functions */
 struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         bool out_is_tls);

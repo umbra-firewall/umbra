@@ -271,7 +271,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd,
         /* Allocate data */
         conn_info = init_conn_info(infd, outfd, is_tls, is_tls);
         if (conn_info == NULL) {
-            log_error("init_conn_info() failed");
+            log_error("init_conn_info() failed\n");
             goto error;
         }
         infd = 0;
@@ -1324,6 +1324,8 @@ int main(int argc, char *argv[]) {
         for (i = 0; i < n; i++) {
             handle_event(efd, &events[i], sfd_http, sfd_tls);
         }
+
+        log_trace("Number of active connections = %d\n", num_conn_infos);
 
 #if ENABLE_SESSION_TRACKING
         log_trace("Now tracking %d active sessions\n",
