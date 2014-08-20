@@ -53,11 +53,12 @@ extern char *error_page_buf;
 extern size_t error_page_len;
 
 struct event_data;
+struct fd_ctx;
 
 /* HTTP utility functions */
-int send_error_page(int sock);
+int send_error_page(struct fd_ctx *fd_ctx);
 int http_parser_method_to_shim(enum http_method method);
-void init_error_page(char *error_page_file);
+int init_error_page(char *error_page_file);
 bool str_to_url_encoded_memeq(const char *str, char *url_data,
         size_t url_data_len, bool *is_valid);
 void print_headers(struct event_data *ev_data);

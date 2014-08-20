@@ -83,14 +83,17 @@ struct variable_enabled {
 /* Global variables */
 extern char *tls_cert_file;
 extern char *tls_key_file;
+extern SSL_CTX* ssl_ctx_server;
+extern SSL_CTX* ssl_ctx_client;
 
 
 /* Function prototypes */
 
 /* Initialization functions */
-void init_structures(char *error_page_file);
-void init_page_conf();
-void init_ssl();
+int init_structures(char *error_page_file);
+int init_page_conf();
+int init_ssl();
+int init_ssl_ctx();
 void free_ssl();
 
 /* Event handlers */
@@ -108,7 +111,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
 void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
-void check_header_pair(struct event_data *ev_data);
+int check_header_pair(struct event_data *ev_data);
 
 /* Feature check helpers */
 struct page_conf *url_find_matching_page(char *url, size_t len);
@@ -139,6 +142,6 @@ int flush_server_event(struct event_data *server_ev_data);
 bool is_hex_digit(char c);
 int fill_rand_bytes(char *buf, size_t len);
 void print_usage(char **argv);
-void parse_program_arguments(int argc, char **argv);
+int parse_program_arguments(int argc, char **argv);
 
 #endif

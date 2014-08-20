@@ -7,7 +7,8 @@ int num_conn_infos = 0;
 #endif
 
 /* Initialize connection_info structure */
-struct connection_info *init_conn_info(int infd, int outfd, bool is_tls) {
+struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
+        bool out_is_tls) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
     log_trace("init_conn_info() (%d total)\n", ++num_conn_infos);
@@ -17,14 +18,14 @@ struct connection_info *init_conn_info(int infd, int outfd, bool is_tls) {
         goto fail;
     }
 
-    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, is_tls,
-            HTTP_REQUEST, conn_info);
+    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, in_is_tls,
+            out_is_tls, HTTP_REQUEST, conn_info);
     if (client_ev_data == NULL) {
         goto fail;
     }
 
-    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, is_tls,
-            HTTP_RESPONSE, conn_info);
+    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, out_is_tls,
+            in_is_tls, HTTP_RESPONSE, conn_info);
     if (server_ev_data == NULL) {
         goto fail;
     }
@@ -32,7 +33,6 @@ struct connection_info *init_conn_info(int infd, int outfd, bool is_tls) {
     conn_info->client_ev_data = client_ev_data;
     conn_info->server_ev_data = server_ev_data;
     conn_info->page_match = NULL;
-    conn_info->is_tls = is_tls;
 
     return conn_info;
 
@@ -46,9 +46,68 @@ fail:
     return NULL;
 }
 
+/* Initializes given fd_ctx. Returns 0 on success, -1 otherwise. */
+int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls, bool is_server) {
+    fd_ctx->sock_fd = sock_fd;
+    fd_ctx->is_tls = is_tls;
+    fd_ctx->is_server = is_server;
+
+#if ENABLE_HTTPS
+    fd_ctx->ssl = NULL;
+    if (is_tls) {
+        SSL_CTX *ssl_ctx = is_server ? ssl_ctx_server : ssl_ctx_client;
+        /* Create SSL from socket */
+        if ((fd_ctx->ssl = SSL_new(ssl_ctx)) == NULL) {
+            log_ssl_error("SSL_new() failed\n");
+            goto error;
+        }
+
+        /* Set to use socket */
+        if (SSL_set_fd(fd_ctx->ssl, fd_ctx->sock_fd) == 0) {
+            log_ssl_error("SSL_set_fd() failed\n");
+            goto error;
+        }
+
+        /* Make initial SSL_accept (for server) or SSL_connect (for client) */
+        const char *func_name = (is_server ? "SSL_accept" : "SSL_connect");
+        int (*func)(SSL *) = (is_server ? SSL_accept : SSL_connect);
+        int rc = 0;
+        while (rc != 1) {
+            rc = func(fd_ctx->ssl);
+            if (rc <= 0) {
+                /* Possible Failure */
+                int err = SSL_get_error(fd_ctx->ssl, rc);
+                if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+                    log_dbg("Other end wants READ/WRITE for %s()\n", func_name);
+                    continue;
+                }
+                log_ssl_error("%s() failed\n", func_name);
+                goto error;
+            }
+        }
+    }
+#endif
+
+    return 0;
+
+error:
+    return -1;
+}
+
+/* Free memory associated with fd_ctx */
+void free_fd_ctx(struct fd_ctx *fd_ctx) {
+#if ENABLE_HTTPS
+    if (fd_ctx != NULL) {
+        if (fd_ctx->ssl) {
+            SSL_free(fd_ctx->ssl);
+        }
+    }
+#endif
+}
+
 /* Initialize event data structure */
 struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
-        bool is_tls, enum http_parser_type parser_type,
+        bool listen_is_tls, bool send_is_tls, enum http_parser_type parser_type,
         struct connection_info *conn_info) {
 
     log_trace("Initializing new event_data\n");
@@ -59,8 +118,20 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     }
 
     ev_data->type = type;
-    ev_data->listen_fd = listen_fd;
-    ev_data->send_fd = send_fd;
+
+    bool listen_is_server = (type == CLIENT_LISTENER);
+    bool send_is_server = (type == SERVER_LISTENER);
+
+    if (init_fd_ctx(&ev_data->listen_fd, listen_fd, listen_is_tls,
+            listen_is_server) < 0) {
+        goto error;
+    }
+
+    if (init_fd_ctx(&ev_data->send_fd, send_fd, send_is_tls, send_is_server)
+            < 0) {
+        goto error;
+    }
+
     ev_data->conn_info = conn_info;
     ev_data->http_msg_newline = NULL;
 
@@ -93,6 +164,7 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         goto error;
     }
 
+    ev_data->content_original_length = -1;
 #endif
 
     if ((ev_data->header_field = bytearray_new()) == NULL) {
@@ -109,47 +181,11 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
         goto error;
     }
 
-    http_parser_init(&ev_data->parser, parser_type);
-    ev_data->parser.data = ev_data;
-
-#if ENABLE_HTTPS
-    if (is_tls) {
-        //@Todo(Travis) make the TLS version configurable
-        ev_data->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
-        if (ev_data->ssl_ctx == NULL) {
-            log_ssl_error();
-            goto error;
-        }
-
-        /* Generate new DH key each time */
-        SSL_CTX_set_options(ev_data->ssl_ctx, SSL_OP_SINGLE_DH_USE);
-
-        /* Pass in the server certificate chain file */
-        if (SSL_CTX_use_certificate_chain_file(ev_data->ssl_ctx,
-                        tls_cert_file) != 1) {
-            log_ssl_error();
-            goto error;
-        }
-
-        /* Pass in the server private key */
-        if (SSL_CTX_use_PrivateKey_file(ev_data->ssl_ctx,
-                        tls_key_file, SSL_FILETYPE_PEM) != 1) {
-            log_ssl_error();
-            goto error;
-        }
-
-        // Load trusted root authorities ??
-
-        /* Create SSL from socket */
-        SSL *cSSL = SSL_new(ev_data->ssl_ctx);
-        SSL_set_fd(cSSL, ev_data->listen_fd);
-    }
-#endif
-
     if ((ev_data->all_header_values = struct_array_new()) == NULL) {
         goto error;
     }
 
+    /* Initialize HTTP parser */
     http_parser_init(&ev_data->parser, parser_type);
     ev_data->parser.data = ev_data;
 
@@ -172,11 +208,8 @@ error:
     struct_array_free(ev_data->all_header_fields, true);
     struct_array_free(ev_data->all_header_values, true);
 
-#if ENABLE_HTTPS
-        if (is_tls) {
-            SSL_CTX_free(ev_data->ssl_ctx);
-        }
-#endif
+    free_fd_ctx(&ev_data->listen_fd);
+    free_fd_ctx(&ev_data->send_fd);
 
     free(ev_data);
     return NULL;
@@ -204,6 +237,8 @@ void reset_event_data(struct event_data *ev) {
 
     struct_array_clear(ev->cookie_name_array, true);
     struct_array_clear(ev->cookie_value_array, true);
+
+    ev->content_original_length = -1;
 #endif
 
     bytearray_clear(ev->header_field);
@@ -269,11 +304,8 @@ void free_event_data(struct event_data *ev) {
     struct_array_free(ev->all_header_fields, true);
     struct_array_free(ev->all_header_values, true);
 
-#if ENABLE_HTTPS
-    if (ev->conn_info->is_tls) {
-        SSL_CTX_free(ev->ssl_ctx);
-    }
-#endif
+    free_fd_ctx(&ev->listen_fd);
+    free_fd_ctx(&ev->send_fd);
 
     free(ev);
 }
@@ -283,12 +315,12 @@ void free_connection_info(struct connection_info *ci) {
     if (ci != NULL) {
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
         if (ci->client_ev_data) {
-            int listen_fd = ci->client_ev_data->listen_fd;
+            int listen_fd = ci->client_ev_data->listen_fd.sock_fd;
             if (listen_fd && close(listen_fd) != 0) {
                 perror("close");
             }
 
-            int send_fd = ci->client_ev_data->send_fd;
+            int send_fd = ci->client_ev_data->send_fd.sock_fd;
             if (send_fd && close(send_fd) != 0) {
                 perror("close");
             }
