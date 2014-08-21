@@ -59,6 +59,7 @@ struct event_data {
 
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
+    bool chunked_encoding_specified : 1;
     bool found_shim_session_cookie : 1;
 #endif
 

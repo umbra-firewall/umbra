@@ -37,6 +37,9 @@
 #define TE_HEADER "TE"
 #define TE_HEADER_STRLEN (sizeof(TE_HEADER) - 1)
 
+#define CHUNKED "chunked"
+#define CHUNKED_STRLEN (sizeof(CHUNKED) - 1)
+
 #define CONTENT_ENCODING_HEADER "Content-Encoding"
 #define CONTENT_ENCODING_HEADER_STRLEN \
     (sizeof(CONTENT_ENCODING_HEADER) - 1)

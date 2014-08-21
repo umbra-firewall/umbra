@@ -105,21 +105,33 @@ void check_header_pair(struct event_data *ev_data) {
             ev_data->cookie_header_value_ref = ev_data->header_value;
         }
 #endif
+
     } else {
         /* Response only Headers */
     }
 
 
     /* Request or Response headers */
-    if (field_len == TRANSFER_ENCODING_HEADER_STRLEN
-            && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0) {
-        /* Warn against Transfer-Encoding */
-        log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
-        cancel_connection(ev_data);
+    if ((field_len == TRANSFER_ENCODING_HEADER_STRLEN
+            && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0)
+            || (field_len == TE_HEADER_STRLEN
+                    && strcasecmp(TE_HEADER, field) == 0)) {
+#if ENABLE_SESSION_TRACKING
+        if (field_len == CHUNKED_STRLEN && strcasecmp(CHUNKED, field) == 0) {
+            log_dbg("Chunked encoding specified\n");
+            ev_data->chunked_encoding_specified = true;
 
-    } else if (field_len == TE_HEADER_STRLEN
-            && strcasecmp(TE_HEADER, field) == 0) {
-        /* Warn against TE abbreviated version */
+            if (ev_data->content_length_specified) {
+                log_warn("HTTP message specified Content-Length and Chunked "
+                        "encoding; can only specify one.\n");
+                cancel_connection(ev_data);
+                return;
+            }
+
+            goto finish;
+        }
+#endif
+        /* Warn against Transfer-Encoding */
         log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
         cancel_connection(ev_data);
 
@@ -138,9 +150,19 @@ void check_header_pair(struct event_data *ev_data) {
         log_dbg("Content-Length specified\n");
         ev_data->content_length_specified = true;
         ev_data->content_length_header_value_ref = ev_data->header_value;
+
+        if (ev_data->chunked_encoding_specified) {
+            log_warn("HTTP message specified Content-Length and Chunked "
+                    "encoding; can only specify one.\n");
+            cancel_connection(ev_data);
+            return;
+        }
     }
 #endif
 
+#if ENABLE_SESSION_TRACKING
+finish:
+#endif
     /* Add header field and value to list of all header pairs */
     rc = struct_array_add(ev_data->all_header_fields,
             ev_data->header_field);
@@ -765,6 +787,10 @@ int handle_client_server_event(struct epoll_event *ev) {
 
             log_dbg("All response headers not received yet\n");
             continue;
+        }
+
+        if (ev_data->chunked_encoding_specified) {
+            //@Todo(Travis) handle chunked encoding
         }
 
         log_dbg("Sending data normally\n");

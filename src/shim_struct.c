@@ -176,6 +176,7 @@ void reset_event_data(struct event_data *ev) {
 
 #if ENABLE_SESSION_TRACKING
     ev->content_length_specified = false;
+    ev->chunked_encoding_specified = false;
     ev->found_shim_session_cookie = false;
 #endif
 
