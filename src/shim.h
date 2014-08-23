@@ -23,7 +23,7 @@
 
 /* Macros */
 
-#define SHIM_VERSION "v0.5.7"
+#define SHIM_VERSION "v0.6.0"
 
 #define DEFAULT_SERVER_HOST "localhost"
 #define MAXEVENTS 256
