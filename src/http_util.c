@@ -120,7 +120,10 @@ void print_headers(struct event_data *ev_data) {
     size_t len = ev_data->all_header_fields->len;
     log_dbg("All HTTP Headers:\n");
     for (i = 0; i < len; i++) {
-        log_dbg("  %s: %s\n", ev_data->all_header_fields->data[i]->data,
+        log_dbg("  %.*s: %.*s\n",
+                (int) ev_data->all_header_fields->data[i]->len,
+                ev_data->all_header_fields->data[i]->data,
+                (int) ev_data->all_header_values->data[i]->len,
                 ev_data->all_header_values->data[i]->data);
     }
 }

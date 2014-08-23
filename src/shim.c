@@ -100,8 +100,8 @@ void check_header_pair(struct event_data *ev_data) {
             ev_data->header_value->data);
 
 
-    if (ev_data->type == CLIENT_LISTENER ) {
-        /* Request Headers */
+    if (ev_data->type == CLIENT_LISTENER) {
+        /* Request only Headers */
 
 #if ENABLE_SESSION_TRACKING
         /* Handle Cookie header */
@@ -113,30 +113,32 @@ void check_header_pair(struct event_data *ev_data) {
         }
 #endif
     } else {
-        /* Response Headers */
-        if (field_len == TRANSFER_ENCODING_HEADER_STRLEN
-                && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0) {
-            /* Warn against Transfer-Encoding */
-            log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
-            cancel_connection(ev_data);
+        /* Response only Headers */
+    }
 
-        } else if (field_len == TE_HEADER_STRLEN
-                && strcasecmp(TE_HEADER, field) == 0) {
-            /* Warn against TE abbreviated version */
-            log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
-            cancel_connection(ev_data);
 
-        } else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
-                && strcasecmp(CONTENT_ENCODING_HEADER, field) == 0) {
-            /* Warn against Content-Encoding */
-            log_warn("Content-Encoding \"%s\" is not supported\n", value);
-            cancel_connection(ev_data);
+    /* Request or Response headers */
+    if (field_len == TRANSFER_ENCODING_HEADER_STRLEN
+            && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0) {
+        /* Warn against Transfer-Encoding */
+        log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
+        cancel_connection(ev_data);
 
-        }
+    } else if (field_len == TE_HEADER_STRLEN
+            && strcasecmp(TE_HEADER, field) == 0) {
+        /* Warn against TE abbreviated version */
+        log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
+        cancel_connection(ev_data);
+
+    } else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
+            && strcasecmp(CONTENT_ENCODING_HEADER, field) == 0) {
+        /* Warn against Content-Encoding */
+        log_warn("Content-Encoding \"%s\" is not supported\n", value);
+        cancel_connection(ev_data);
+
     }
 
 #if ENABLE_SESSION_TRACKING
-    /* Request or Response headers */
     if (field_len == CONTENT_LENGTH_HEADER_STRLEN
             && strcasecmp(CONTENT_LENGTH_HEADER, field) == 0) {
         /* Handle Content-Length */
