@@ -62,7 +62,7 @@
     "</script>\n"
 #define INSERT_HIDDEN_TOKEN_JS_STRLEN \
     (sizeof(INSERT_HIDDEN_TOKEN_JS_FORMAT) + SHIM_SESSID_LEN - 3)
-
+    /* Minus 1 for NUL byte, Minus 2 for the "%s" which is replace */
 
 struct session {
     char session_id[SHIM_SESSID_LEN + 1];
@@ -94,6 +94,8 @@ void expire_sessions();
 bool is_session_expired(struct session *s);
 int get_num_active_sessions();
 int add_set_cookie_header(struct event_data *ev_data);
+int update_original_content_length(struct event_data *ev_data);
+long long get_original_content_length(struct event_data *ev_data);
 int set_new_content_length(struct event_data *ev_data);
 int remove_shim_sessid_cookie(struct event_data *ev_data);
 int add_cookie_piece(bytearray_t *c, int i, struct event_data *ev_data);

@@ -789,7 +789,8 @@ enable_options = {
         BoolOption('enable_param_len_check', isTopLevel=True),
         BoolOption('enable_param_whitelist_check', isTopLevel=True),
         BoolOption('enable_url_directory_traversal_check', isTopLevel=True),
-        BoolOption('enable_csrf_protection', isTopLevel=True)
+        BoolOption('enable_csrf_protection', isTopLevel=True),
+        BoolOption('enable_https', isTopLevel=True)
 }
 global_conf_required = {
         PosIntOption('max_header_field_len', isTopLevel=True),

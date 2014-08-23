@@ -1,4 +1,7 @@
+#include <getopt.h>
 #include <errno.h>
+#include <openssl/engine.h>
+#include <openssl/conf.h>
 #include "shim.h"
 #include "config.h"
 #include "http_callbacks.h"
@@ -7,9 +10,19 @@
 #include "shim_struct.h"
 #include "log.h"
 
-char *http_port_str, *server_http_port_str;
+char *shim_http_port_str = NULL, *server_http_port_str = NULL;
+char *shim_tls_port_str = NULL, *server_tls_port_str = NULL;
+char *tls_cert_file = NULL, *tls_key_file = NULL;
+char *server_hostname = DEFAULT_SERVER_HOST;
 
-bool sigint_received = false;
+#if ENABLE_HTTPS
+SSL_CTX *ssl_ctx_server;
+SSL_CTX *ssl_ctx_client;
+#endif
+
+char *error_page_file = NULL;
+
+static bool sigint_received = false;
 
 http_parser_settings client_parser_settings = {
     .on_message_begin = on_message_begin_cb,
@@ -69,7 +82,7 @@ int update_bytearray(bytearray_t *b, const char *at, size_t length,
 }
 
 /* Inspects current header pair */
-void check_header_pair(struct event_data *ev_data) {
+int check_header_pair(struct event_data *ev_data) {
     int rc = 0;
     char *field = ev_data->header_field->data;
     char *value = ev_data->header_value->data;
@@ -80,13 +93,11 @@ void check_header_pair(struct event_data *ev_data) {
     /* NUL terminate header field and value */
     if (bytearray_append(ev_data->header_field, "\0", 1) < 0) {
         log_error("Could not append to bytearray\n");
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
     if (bytearray_append(ev_data->header_value, "\0", 1) < 0) {
         log_error("Could not append to bytearray\n");
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
 
     log_trace("Header: \"%s\": \"%s\"\n", ev_data->header_field->data,
@@ -112,64 +123,70 @@ void check_header_pair(struct event_data *ev_data) {
 
 
     /* Request or Response headers */
+
+    /* With session tracking, we inject a JS snippet, so we need to understand
+     * how the body is sent. Otherwise, we do not care how the body is encoded.
+     * The exception is chunked transfer encoding with trailers, which may
+     * include additional headers.
+     */
     if ((field_len == TRANSFER_ENCODING_HEADER_STRLEN
             && strcasecmp(TRANSFER_ENCODING_HEADER, field) == 0)
             || (field_len == TE_HEADER_STRLEN
                     && strcasecmp(TE_HEADER, field) == 0)) {
-#if ENABLE_SESSION_TRACKING
+
         if (field_len == CHUNKED_STRLEN && strcasecmp(CHUNKED, field) == 0) {
+            /* Only chunked encoding is allowed */
+#if ENABLE_SESSION_TRACKING
             log_dbg("Chunked encoding specified\n");
             ev_data->chunked_encoding_specified = true;
 
             if (ev_data->content_length_specified) {
                 log_warn("HTTP message specified Content-Length and Chunked "
                         "encoding; can only specify one.\n");
-                cancel_connection(ev_data);
-                return;
+                goto error;
             }
-
-            goto finish;
-        }
 #endif
-        /* Warn against Transfer-Encoding */
-        log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
-        cancel_connection(ev_data);
+        } else {
+            /* Warn against unhandled Transfer-Encoding, such as trailers */
+            log_warn("Transfer-Encoding \"%s\" is not supported\n", value);
+            goto error;
+        }
 
-    } else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
+    }
+#if ENABLE_SESSION_TRACKING
+    else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
             && strcasecmp(CONTENT_ENCODING_HEADER, field) == 0) {
         /* Warn against Content-Encoding */
         log_warn("Content-Encoding \"%s\" is not supported\n", value);
-        cancel_connection(ev_data);
+        goto error;
 
-    }
-
-#if ENABLE_SESSION_TRACKING
-    if (field_len == CONTENT_LENGTH_HEADER_STRLEN
+    } else if (field_len == CONTENT_LENGTH_HEADER_STRLEN
             && strcasecmp(CONTENT_LENGTH_HEADER, field) == 0) {
         /* Handle Content-Length */
         log_dbg("Content-Length specified\n");
         ev_data->content_length_specified = true;
         ev_data->content_length_header_value_ref = ev_data->header_value;
 
+        if (update_original_content_length(ev_data) < 0) {
+            log_error("update_content_length() failed\n");
+            goto error;
+        }
+
         if (ev_data->chunked_encoding_specified) {
             log_warn("HTTP message specified Content-Length and Chunked "
                     "encoding; can only specify one.\n");
-            cancel_connection(ev_data);
-            return;
+            goto error;
+
         }
     }
 #endif
 
-#if ENABLE_SESSION_TRACKING
-finish:
-#endif
     /* Add header field and value to list of all header pairs */
     rc = struct_array_add(ev_data->all_header_fields,
             ev_data->header_field);
     if (rc < 0) {
         log_warn("header_fields append failed\n");
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
     ev_data->header_field = NULL;
 
@@ -177,22 +194,26 @@ finish:
             ev_data->header_value);
     if (rc < 0) {
         log_warn("header_values append failed\n");
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
     ev_data->header_value = NULL;
 
     /* Allocate new header field/value bytearrays */
     ev_data->header_field = bytearray_new();
     if (ev_data->header_field == NULL) {
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
+
     ev_data->header_value = bytearray_new();
     if (ev_data->header_field == NULL) {
-        cancel_connection(ev_data);
-        return;
+        goto error;
     }
+
+    return 0;
+
+error:
+    cancel_connection(ev_data);
+    return -1;
 }
 
 
@@ -220,7 +241,8 @@ void update_http_header_pair(struct event_data *ev_data, bool is_header_field,
 
 
 /* Handle a new incoming connection */
-int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd,
+        bool is_tls) {
     int s;
     struct epoll_event client_event = {0}, server_event = {0};
     struct connection_info *conn_info;
@@ -228,7 +250,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
     while (1) {
         struct sockaddr in_addr;
         socklen_t in_len;
-        int infd, outfd;
+        int infd = 0, outfd = 0;
         char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 
         in_len = sizeof(in_addr);
@@ -247,38 +269,43 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         s = getnameinfo(&in_addr, in_len, hbuf, sizeof(hbuf), sbuf,
                 sizeof(sbuf),
                 NI_NUMERICHOST | NI_NUMERICSERV);
-        if (s == 0) {
-            log_trace("Accepted connection on descriptor %d "
-                    "(host=%s, port=%s)\n",
-                    infd, hbuf, sbuf);
+        if (s < 0) {
+            perror("getnameinfo");
+            goto error;
         }
+
+        log_trace("Accepted connection on descriptor %d (host=%s, port=%s)\n",
+                infd, hbuf, sbuf);
 
         /* Make the incoming socket non-blocking and add it to the
          list of fds to monitor. */
         s = make_socket_non_blocking(infd);
         if (s < 0) {
             log_error("Could not make new socket non-blocking\n");
-            return -1;
+            goto error;
         }
 
         /* Create proxy socket to server */
         outfd = create_and_connect(server_http_port_str);
         if (outfd < 0) {
-            return -1;
+            goto error;
         }
 
         s = make_socket_non_blocking(outfd);
         if (s < 0) {
             log_error("Could not make forward socket non-blocking\n");
-            return -1;
+            goto error;
         }
 
         /* Allocate data */
-        conn_info = init_conn_info(infd, outfd);
+        conn_info = init_conn_info(infd, outfd, is_tls, is_tls);
         if (conn_info == NULL) {
-            log_error("init_conn_info() failed");
-            return -1;
+            log_error("init_conn_info() failed\n");
+            goto error;
         }
+        infd = 0;
+        outfd = 0;
+
 
         client_event.data.ptr = conn_info->client_ev_data;
         client_event.events = EPOLLIN | EPOLLET;
@@ -286,17 +313,24 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd) {
         server_event.data.ptr = conn_info->server_ev_data;
         server_event.events = EPOLLIN | EPOLLET;
 
-        s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &client_event);
+        s = epoll_ctl(efd, EPOLL_CTL_ADD,
+                conn_info->client_ev_data->listen_fd.sock_fd, &client_event);
         if (s == -1) {
             perror("epoll_ctl");
-            return -1;
+            goto error;
         }
 
-        s = epoll_ctl(efd, EPOLL_CTL_ADD, outfd, &server_event);
+        s = epoll_ctl(efd, EPOLL_CTL_ADD,
+                conn_info->server_ev_data->listen_fd.sock_fd, &server_event);
         if (s == -1) {
             perror("epoll_ctl");
-            return -1;
+            goto error;
         }
+
+error:
+    close_fd_if_valid(infd);
+    close_fd_if_valid(outfd);
+    return -1;
     }
 
     return 0;
@@ -358,12 +392,6 @@ struct params *find_matching_param(char *name, size_t name_len,
         }
     }
     return NULL;
-}
-
-/* Returns whether character corresponds to a hexadecimal digit */
-bool is_hex_digit(char c) {
-    return ('0' <= c && c <= '9') || ('a' <= c && c <= 'f')
-            || ('A' <= c && c <= 'F');
 }
 
 /* Checks if character is allowed by whitelist, cancelling the connection if it
@@ -706,25 +734,24 @@ int handle_client_server_event(struct epoll_event *ev) {
 
     /* Read into buffer */
     while (!done) {
-        count = read(ev_data->listen_fd, buf, READ_BUF_SIZE);
-        if (count == -1) {
-            /* If errno == EAGAIN, that means we have read all
-             data for now. So go back to the main loop. */
-            if (errno == EAGAIN) {
+        bool eagain = false;
+        count = fd_ctx_read(&ev_data->listen_fd, buf, READ_BUF_SIZE, &eagain);
+        if (count < 0) {
+            if (eagain) {
+                /* We have read all data for now */
                 log_dbg("Got EAGAIN on read\n");
                 ev_data->got_eagain = true;
                 done = 1;
                 break;
             } else {
-                perror("read");
+                /* Error occurred reading */
                 cancel_connection(ev_data);
                 done = 1;
                 break;
             }
             break;
         } else if (count == 0) {
-            /* End of file. The remote has closed the
-             connection. */
+            /* End of file. The remote has closed the connection. */
             done = 1;
         }
 
@@ -789,9 +816,11 @@ int handle_client_server_event(struct epoll_event *ev) {
             continue;
         }
 
+#if ENABLE_SESSION_TRACKING
         if (ev_data->chunked_encoding_specified) {
             //@Todo(Travis) handle chunked encoding
         }
+#endif
 
         log_dbg("Sending data normally\n");
         done |= do_http_parse_send(NULL, 0, buf, count, ev_data,
@@ -808,13 +837,13 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 check_cancelled:
     if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
-        if (send_error_page(ev_data->listen_fd)) {
+        if (send_error_page(&ev_data->listen_fd)) {
             log_info("Failed to send error page.\n");
         }
-        close(ev_data->listen_fd);
-        close(ev_data->send_fd);
-        ev_data->listen_fd = 0;
-        ev_data->send_fd = 0;
+        close(ev_data->listen_fd.sock_fd);
+        close(ev_data->send_fd.sock_fd);
+        ev_data->listen_fd.sock_fd = 0;
+        ev_data->send_fd.sock_fd = 0;
         log_info("Closed_connection\n");
         return 1;
     }
@@ -827,10 +856,9 @@ check_cancelled:
 int check_send_csrf_js_snippet(struct event_data *ev_data) {
     int done = 0;
     log_dbg("Checking if page has CSRF protection\n");
-    if (!is_conn_cancelled(ev_data) && !ev_data->got_eagain
-            && ev_data->msg_complete && ev_data->conn_info->page_match
+    if (!is_conn_cancelled(ev_data) && ev_data->conn_info->page_match
             && ev_data->conn_info->page_match->has_csrf_form
-            && !ev_data->sent_js_snippet) {
+            && !ev_data->sent_js_snippet && ev_data->msg_complete) {
         log_trace("Page has CSRF protected form; sending JS snippet\n");
         int s;
         char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
@@ -842,7 +870,7 @@ int check_send_csrf_js_snippet(struct event_data *ev_data) {
             cancel_connection(ev_data);
             done = 1;
         }
-        s = sendall(ev_data->send_fd, js_snippet, snippet_len);
+        s = sendall(&ev_data->send_fd, js_snippet, snippet_len);
         if (s < 0) {
             log_error("sendall failed\n");
             cancel_connection(ev_data);
@@ -935,7 +963,7 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
     }
 
     /* Send rest of buf */
-    s = sendall(ev_data->send_fd, body_buf, body_buf_len);
+    s = sendall(&ev_data->send_fd, body_buf, body_buf_len);
     if (s < 0) {
         log_error("sendall failed\n");
         cancel_connection(ev_data);
@@ -946,9 +974,10 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
 }
 
 /* Handle epoll event */
-void handle_event(int efd, struct epoll_event *ev, int sfd) {
+void handle_event(int efd, struct epoll_event *ev, int sfd_http, int sfd_tls) {
     int done;
     struct event_data *ev_data = (struct event_data *) (ev->data.ptr);
+    int listen_sock = ev_data->listen_fd.sock_fd;
 
     if ((ev->events & EPOLLERR) || (ev->events & EPOLLHUP)
             || (!(ev->events & EPOLLIN))) {
@@ -959,15 +988,17 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
         ev->data.ptr = NULL;
         return;
 
-    } else if (sfd == ev_data->listen_fd) {
-        /* We have a notification on the listening socket, which
+    } else if (sfd_http == listen_sock || sfd_tls == listen_sock) {
+        /* We have a notification on a listening socket, which
          means one or more incoming connections. */
-        if (handle_new_connection(efd, ev, sfd) < 0) {
+
+        bool is_tls = (sfd_tls == listen_sock);
+        int sfd = ev_data->listen_fd.sock_fd;
+        if (handle_new_connection(efd, ev, sfd, is_tls) < 0) {
             free_connection_info(ev_data->conn_info);
             ev->data.ptr = NULL;
         }
         return;
-
     } else if (ev->data.ptr != NULL) {
         /* We have data on the fd waiting to be read. Read and
          display it. We must read whatever data is available
@@ -987,6 +1018,8 @@ void handle_event(int efd, struct epoll_event *ev, int sfd) {
             free_connection_info(ev_data->conn_info);
             ev->data.ptr = NULL;
         }
+    } else {
+        log_error("Unhandled epoll event\n");
     }
 
 }
@@ -997,90 +1030,343 @@ void sigint_handler(int dummy) {
 }
 
 /* Initialize structures for walking pages */
-void init_page_conf() {
+int init_page_conf() {
     // @Todo(Travis) Create trie to index pages
+    return 0;
 }
 
+
+#if ENABLE_HTTPS
+/* Tries to initialize SSL ctx. Returns 0 on success, -1 otherwise. */
+int init_ssl_ctx() {
+    /* Initialize server context */
+    //@Todo(Travis) make the TLS version configurable
+    ssl_ctx_server = SSL_CTX_new(TLSv1_server_method());
+    if (ssl_ctx_server == NULL) {
+        log_ssl_error("Server SSL_CTX_new() failed\n");
+        return -1;
+    }
+
+    /* Generate new DH key each time */
+    SSL_CTX_set_options(ssl_ctx_server, SSL_OP_SINGLE_DH_USE);
+    SSL_CTX_set_options(ssl_ctx_server, SSL_OP_NO_SSLv2);
+
+    /* Pass in the server certificate chain file */
+    if (SSL_CTX_use_certificate_chain_file(ssl_ctx_server,
+                    tls_cert_file) != 1) {
+        log_ssl_error("SSL_CTX_use_certificate_chain_file(\"%s\") failed\n",
+                tls_cert_file);
+        return -1;
+    }
+
+    /* Pass in the server private key */
+    if (SSL_CTX_use_PrivateKey_file(ssl_ctx_server,
+                    tls_key_file, SSL_FILETYPE_PEM) != 1) {
+        log_ssl_error("SSL_CTX_use_PrivateKey_file(\"%s\") failed\n",
+                tls_key_file);
+        return -1;
+    }
+
+    /* Verify private key */
+    if (!SSL_CTX_check_private_key(ssl_ctx_server)) {
+        log_error("Private key does not match the certificate\n");
+        return -1;
+    }
+
+    // Load trusted root authorities ??
+
+    /* Initialize client context */
+    ssl_ctx_client = SSL_CTX_new(TLSv1_client_method());
+    if (ssl_ctx_server == NULL) {
+        log_ssl_error("Client SSL_CTX_new() failed\n");
+        return -1;
+    }
+
+    SSL_CTX_set_options(ssl_ctx_client, SSL_OP_NO_SSLv2);
+
+    return 0;
+}
+
+void print_openssl_info() {
+    log_dbg("OpenSSL information:\n");
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_VERSION));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_CFLAGS));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_BUILT_ON));
+    log_dbg("  %s\n", SSLeay_version(SSLEAY_PLATFORM));
+}
+
+/* Initialize OpenSSL */
+int init_ssl() {
+    print_openssl_info();
+
+    CRYPTO_malloc_init();
+
+    SSL_library_init();
+    SSL_load_error_strings();
+    ERR_load_BIO_strings();
+    OpenSSL_add_all_algorithms();
+
+    if (init_ssl_ctx() < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Free memory associated with OpenSSL */
+void free_ssl() {
+    SSL_CTX_free(ssl_ctx_server);
+    SSL_CTX_free(ssl_ctx_client);
+
+    ENGINE_cleanup();
+    CONF_modules_unload(1);
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+
+    /* Free ssl_comp_methods stack and its elements */
+    sk_SSL_COMP_pop_free(SSL_COMP_get_compression_methods(),
+            (void (*)(SSL_COMP *) ) CRYPTO_free);
+
+    ERR_remove_state(0); /* Free state of current thread */
+    ERR_free_strings();
+}
+#endif
+
+
 /* Do main initialization */
-void init_structures(char *error_page_file) {
-    init_error_page(error_page_file);
+int init_structures(char *error_page_file) {
+    if (init_error_page(error_page_file) < 0) {
+        return -1;
+    }
+
     init_config_vars();
-    init_page_conf();
+
+    if (init_page_conf() < 0) {
+        return -1;
+    }
+
 #if ENABLE_SESSION_TRACKING
     memset(current_sessions, 0, sizeof(current_sessions));
 #endif
+
+#if ENABLE_HTTPS
+    if (init_ssl() < 0) {
+        return -1;
+    }
+#endif
+
+    return 0;
 }
 
-int main(int argc, char *argv[]) {
-    int sfd, s;
-    int efd;
-    struct epoll_event event;
-    struct epoll_event *events;
-    char *error_page_file = NULL;
+void parse_program_arguments_error(char **argv) {
+    print_usage(argv);
+    exit(EXIT_FAILURE);
+}
 
-    memset(&event, 0, sizeof(struct epoll_event));
+/* Print usage information for shim */
+void print_usage(char **argv) {
+    printf("Shim %s\n", SHIM_VERSION);
+    printf("Usage: %s <REQUIRED ARGUMENTS> [OPTIONAL ARGUMENTS]\n",
+            argv[0]);
+    printf("\n");
 
-    if (argc != 3 && argc != 4) {
-        fprintf(stderr, "Usage: %s SHIM_PORT SERVER_PORT [ERROR_PAGE]\n",
-                argv[0]);
-        fprintf(stderr, "Shim %s\n", SHIM_VERSION);
+    printf("Required arguments:\n");
+    ARGUMENT_MAP(PRINT_USAGE_REQUIRED_LAMBDA);
+    printf("\n");
+
+    printf("Optional arguments:\n");
+    ARGUMENT_MAP(PRINT_USAGE_OPTIONAL_LAMBDA);
+    printf("\n");
+}
+
+/* Parses program arguments, setting the option variables. Returns 0 on success,
+ * -1 otherwise.
+ */
+int parse_program_arguments(int argc, char **argv) {
+    int c, i;
+
+    struct option long_options[] = {
+        ARGUMENT_MAP(GETOPT_OPTIONS_LAMBDA)
+        { 0, 0, 0, 0 }
+    };
+
+    struct variable_enabled variable_arr[] = {
+        ARGUMENT_MAP(ARG_VARIABLE_LAMBDA)
+    };
+
+    while (1) {
+        int option_index = 0;
+
+        /* '-' causes getopt_long to return 1 for extra arguments */
+        char optstring[] = "-";
+
+        c = getopt_long_only(argc, argv, optstring, long_options, &option_index);
+
+        /* Detect the end of the options. */
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 0:
+            if (optarg == NULL) {
+                log_error("getopt_long did not set optarg\n");
+                return -1;
+            }
+            if (variable_arr[option_index].enabled) {
+                *variable_arr[option_index].variable = optarg;
+            } else {
+                parse_program_arguments_error(argv);
+            }
+            break;
+
+        case 1:
+            /* Argument without corresponding option */
+            /* Fallthrough to error case*/
+        case '?':
+            parse_program_arguments_error(argv);
+            break;
+
+        default:
+            log_error("getopt() parsing case %d not handled "
+                    "unexpectedly\n", c);
+            return -1;
+        }
+    }
+
+    bool found_error = false;
+    int len = sizeof(variable_arr) / sizeof(struct variable_enabled);
+    for (i = 0; i < len; i++) {
+        struct variable_enabled *var = &variable_arr[i];
+        if (var->enabled && var->required && *var->variable == NULL) {
+            found_error = true;
+            printf("Argument \"--%s\" not specified\n", long_options[i].name);
+        }
+    }
+
+    if (found_error) {
+        print_usage(argv);
         exit(EXIT_FAILURE);
     }
 
-    if (signal(SIGINT, sigint_handler) < 0) {
-        perror("signal");
-        abort();
-    }
+    log_dbg("Running with arguments:\n");
+    ARGUMENT_MAP(PRINT_ARGS_LAMBDA);
 
-    http_port_str = argv[1];
-    server_http_port_str = argv[2];
+    return 0;
+}
 
-    if (argc == 4) {
-        error_page_file = argv[3];
-    }
+/* Set up non-blocking listener on given port. Returns the listening socket
+ * file descriptor on success, -1 otherwise.
+ */
+int set_up_socket_listener(char *port_str) {
+    int s, sfd;
 
-    init_structures(error_page_file);
-
-    /* Set up listener */
-    sfd = create_and_bind(http_port_str);
+    sfd = create_and_bind(port_str);
     if (sfd == -1) {
-        abort();
+        return -1;
     }
 
     s = make_socket_non_blocking(sfd);
     if (s == -1) {
-        abort();
+        return -1;
     }
 
     s = listen(sfd, SOMAXCONN);
     if (s == -1) {
         perror("listen");
-        abort();
+        return -1;
     }
+
+    return sfd;
+}
+
+/* Initializes listening epoll_event with socket sfd. Returns 0 on success,
+ * -1 otherwise.
+ */
+int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
+    int s;
+
+    e->data.ptr = calloc(1, sizeof(struct event_data));
+    if (e->data.ptr == NULL) {
+        perror("calloc");
+        return -1;
+    }
+
+    ((struct event_data *) e->data.ptr)->listen_fd.sock_fd = sfd;
+
+    e->events = EPOLLIN | EPOLLET;
+    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, e);
+    if (s == -1) {
+        perror("epoll_ctl");
+        return -1;
+    }
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    int sfd_http = -1, sfd_tls = -1;
+    int efd = -1;
+    struct epoll_event event_http;
+    struct epoll_event *events = NULL;
+#if ENABLE_HTTPS
+    struct epoll_event event_tls;
+#endif
+
+    memset(&event_http, 0, sizeof(struct epoll_event));
+
+#if ENABLE_HTTPS
+    memset(&event_tls, 0, sizeof(struct epoll_event));
+#endif
+
+    if (parse_program_arguments(argc, argv) < 0) {
+        goto finish;
+    }
+
+    if (signal(SIGINT, sigint_handler) < 0) {
+        perror("signal");
+        goto finish;
+    }
+
+    if (init_structures(error_page_file) < 0) {
+        goto finish;
+    }
+
+    /* Set up HTTP listener */
+    sfd_http = set_up_socket_listener(shim_http_port_str);
+    if (sfd_http < 0) {
+        goto finish;
+    }
+
+#if ENABLE_HTTPS
+    /* Set up HTTPS listener */
+    sfd_tls = set_up_socket_listener(shim_tls_port_str);
+    if (sfd_tls < 0) {
+        goto finish;
+    }
+#endif
 
     efd = epoll_create(20);
     if (efd == -1) {
         perror("epoll_create");
-        abort();
+        goto finish;
     }
 
-    event.data.ptr = calloc(1, sizeof(struct event_data));
-    if (event.data.ptr == NULL) {
-        perror("calloc");
-        abort();
+    if (init_listen_event_data(&event_http, efd, sfd_http) < 0) {
+        goto finish;
     }
 
-    ((struct event_data *) event.data.ptr)->listen_fd = sfd;
-
-    event.events = EPOLLIN | EPOLLET;
-    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, &event);
-    if (s == -1) {
-        perror("epoll_ctl");
-        abort();
+#if ENABLE_HTTPS
+    if (init_listen_event_data(&event_tls, efd, sfd_tls) < 0) {
+        goto finish;
     }
+#endif
 
     /* Buffer where events are returned */
     events = calloc(MAXEVENTS, sizeof(struct epoll_event));
+    if (events == NULL) {
+        goto finish;
+    }
 
     /* The event loop */
     while (!sigint_received) {
@@ -1102,8 +1388,10 @@ int main(int argc, char *argv[]) {
 #endif
 
         for (i = 0; i < n; i++) {
-            handle_event(efd, &events[i], sfd);
+            handle_event(efd, &events[i], sfd_http, sfd_tls);
         }
+
+        log_trace("Number of active connections = %d\n", num_conn_infos);
 
 #if ENABLE_SESSION_TRACKING
         log_trace("Now tracking %d active sessions\n",
@@ -1111,12 +1399,18 @@ int main(int argc, char *argv[]) {
 #endif
     }
 
-    close(efd);
+finish:
+    close_fd_if_valid(efd);
+    close_fd_if_valid(sfd_http);
     free(events);
-    free(event.data.ptr);
+    free(event_http.data.ptr);
     free(error_page_buf);
 
-    close(sfd);
+#if ENABLE_HTTPS
+    close_fd_if_valid(sfd_tls);
+    free(event_tls.data.ptr);
+    free_ssl();
+#endif
 
     return EXIT_SUCCESS;
 }

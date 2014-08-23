@@ -20,7 +20,9 @@ int on_headers_complete_cb(http_parser *p) {
 
     /* Check last header pair */
     if (ev_data->header_field->len != 0) {
-        check_header_pair(ev_data);
+        if (check_header_pair(ev_data) < 0) {
+            return -1;
+        }
     }
 
     if (ev_data->all_header_fields->len != ev_data->all_header_values->len) {
@@ -159,13 +161,15 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
 
 int on_body_cb(http_parser *p, const char *at, size_t length) {
 #if ENABLE_PARAM_CHECKS
-    if (p->method == HTTP_POST) { /* Use http_parser macro */
-        struct event_data *ev_data = (struct event_data *) p->data;
+    struct event_data *ev_data = (struct event_data *) p->data;
+    if (ev_data->type == CLIENT_LISTENER && p->method == HTTP_POST) {
+        /* Need to use http_parser HTTP_POST macro */
         if (update_bytearray(ev_data->body, at, length, ev_data) < 0) {
             return -1;
         }
         log_trace("POST Body: \"%.*s\"\n", (int) ev_data->body->len, ev_data->body->data);
     }
 #endif
+
     return 0;
 }

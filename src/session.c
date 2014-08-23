@@ -406,6 +406,29 @@ error:
     return -1;
 }
 
+/* Updates stored Content-Length. Returns -1 on failure */
+int update_original_content_length(struct event_data *ev_data) {
+    if (!ev_data->content_length_specified) {
+        return -1;
+    }
+
+    if (sscanf(ev_data->content_length_header_value_ref->data, "%lld",
+            &ev_data->content_original_length) != 1) {
+        log_error("Could not read Content-Length value: %.*s\n",
+                (int) ev_data->content_length_header_value_ref->len,
+                ev_data->content_length_header_value_ref->data);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* If Content-Length header specified, then returns the Content-Length an
+ * a long long. Otherwise, returns -1. */
+long long get_original_content_length(struct event_data *ev_data) {
+    return ev_data->content_original_length;
+}
+
 /* Modify Content-Length header for changes in body length.
  * Returns 0 on success, -1 otherwise. */
 int set_new_content_length(struct event_data *ev_data) {
@@ -437,21 +460,17 @@ int set_new_content_length(struct event_data *ev_data) {
         log_trace("Replacing Content-Length: original=%s\n",
                 ev_data->content_length_header_value_ref->data);
         /* Read original value */
-        size_t original_len;
-        if (sscanf(ev_data->content_length_header_value_ref->data, "%zd",
-                &original_len) != 1) {
-            log_error("Could not read Content-Length value: %.*s\n",
-                    (int) ev_data->content_length_header_value_ref->len,
-                    ev_data->content_length_header_value_ref->data);
+        long long original_len = get_original_content_length(ev_data);
+        if (original_len < 0) {
             goto error;
         }
 
-        size_t new_len = original_len + additional_length;
+        long long new_len = original_len + additional_length;
 
         /* Write new value to string */
         char new_len_buf[ev_data->content_length_header_value_ref->len + 10];
         int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
-                "%zd", new_len);
+                "%lld", new_len);
         if (new_len_buf_len < 0) {
             log_error("Could not write new calculated Content-Length "
                     "to buffer\n");
@@ -462,8 +481,14 @@ int set_new_content_length(struct event_data *ev_data) {
         if (bytearray_clear(ev_data->content_length_header_value_ref) < 0) {
             goto error;
         }
-        if (bytearray_append(ev_data->content_length_header_value_ref, new_len_buf,
-                new_len_buf_len) < 0) {
+        if (bytearray_append(ev_data->content_length_header_value_ref,
+                new_len_buf, new_len_buf_len) < 0) {
+            goto error;
+        }
+
+        /* Other functions expect headers to be NUL terminated */
+        if (bytearray_nul_terminate(ev_data->content_length_header_value_ref)
+                < 0) {
             goto error;
         }
 
@@ -539,9 +564,12 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
             }
         }
 
-        log_dbg("New cookie: \"%.*s\"\n",
-                (int) ev_data->cookie_header_value_ref->len,
-                ev_data->cookie_header_value_ref->data);
+        /* Other functions expect headers to be NUL terminated */
+        if (bytearray_nul_terminate(c) < 0) {
+            goto error;
+        }
+
+        log_dbg("New cookie: \"%s\"\n", c->data);
     }
 
     return 0;

@@ -23,8 +23,9 @@
 
 /* Macros */
 
-#define SHIM_VERSION "v0.5.7"
+#define SHIM_VERSION "v0.6.0"
 
+#define DEFAULT_SERVER_HOST "localhost"
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
 
@@ -33,17 +34,79 @@
 #define XSTR(a) STR(a)
 #define STR(a) #a
 
+/* index, name, required, enabled, var, description */
+#define ARGUMENT_MAP(XX) \
+    /* Required args */ \
+    XX(0, "shim-http-port", true, true, shim_http_port_str, \
+            "HTTP port on which shim should listen") \
+    XX(1, "server-http-port", true, true, server_http_port_str, \
+            "port of listening HTTP server") \
+    XX(2, "shim-tls-port", true, ENABLE_HTTPS, shim_tls_port_str, \
+            "HTTPS port on which shim should listen") \
+    XX(3, "server-tls-port", true, ENABLE_HTTPS, server_tls_port_str, \
+            "port of listening HTTPS server") \
+    XX(4, "tls-cert", true, ENABLE_HTTPS, tls_cert_file, \
+            "PEM file with TLS certificate chain") \
+    XX(5, "tls-key", true, ENABLE_HTTPS, tls_key_file, \
+            "PEM file with server private key") \
+    \
+    /* Optional args */ \
+    XX(6, "error-page", false, true, error_page_file, \
+            "file containing contents for error page") \
+    XX(7, "server-host", false, true, server_hostname, \
+            "IP address or hostname of webserver. " \
+            "Defaults to " DEFAULT_SERVER_HOST ".")
+
+#define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
+    {name, required_argument, NULL, 0},
+
+#define ARGUMENT_USAGE_FORMAT "--%-16s    %s\n"
+
+#define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
+    if ((enabled) && (required)) {\
+        printf(ARGUMENT_USAGE_FORMAT, name, description); \
+    }
+
+#define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
+    if ((enabled) && !(required)) {\
+        printf(ARGUMENT_USAGE_FORMAT, name, description); \
+    }
+
+struct variable_enabled {
+    char **variable;
+    bool enabled;
+    bool required;
+};
+#define ARG_VARIABLE_LAMBDA(index, name, required, enabled, var, description) \
+    {&var, enabled, required},
+
+#define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
+    if (enabled) {\
+        log_dbg("  %s=%s\n", name, var ? var : "NULL"); \
+    }
+
+
+/* Global variables */
+extern char *tls_cert_file;
+extern char *tls_key_file;
+extern char *server_hostname;
+extern SSL_CTX* ssl_ctx_server;
+extern SSL_CTX* ssl_ctx_client;
+
 
 /* Function prototypes */
 
 /* Initialization functions */
-void init_structures(char *error_page_file);
-void init_page_conf();
+int init_structures(char *error_page_file);
+int init_page_conf();
+int init_ssl();
+int init_ssl_ctx();
+void free_ssl();
 
 /* Event handlers */
-void handle_event(int efd, struct epoll_event *ev, int sfd);
+void handle_event(int efd, struct epoll_event *ev, int sfd, int sfd_tls);
 int handle_client_server_event(struct epoll_event *ev);
-int handle_new_connection(int efd, struct epoll_event *ev, int sfd);
+int handle_new_connection(int efd, struct epoll_event *ev, int sfd, bool is_tls);
 void sigint_handler(int dummy);
 
 /* Feature checks */
@@ -55,7 +118,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
 void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
-void check_header_pair(struct event_data *ev_data);
+int check_header_pair(struct event_data *ev_data);
 
 /* Feature check helpers */
 struct page_conf *url_find_matching_page(char *url, size_t len);
@@ -83,8 +146,10 @@ int check_send_csrf_js_snippet(struct event_data *ev_data);
 int flush_server_event(struct event_data *server_ev_data);
 
 /* Util functions */
-bool is_hex_digit(char c);
 int fill_rand_bytes(char *buf, size_t len);
-
+void print_usage(char **argv);
+int set_up_socket_listener(char *port_str);
+int init_listen_event_data(struct epoll_event *e, int efd, int sfd);
+int parse_program_arguments(int argc, char **argv);
 
 #endif
