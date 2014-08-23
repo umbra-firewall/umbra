@@ -9,7 +9,8 @@
         "enable_param_whitelist_check": true,
         "enable_url_directory_traversal_check": true,
         "enable_csrf_protection": true,
-        "session_life_seconds": 300
+        "session_life_seconds": 300,
+        "enable_https": false
     },
 
     "default_page_config": {
