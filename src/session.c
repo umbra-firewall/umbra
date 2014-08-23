@@ -481,8 +481,14 @@ int set_new_content_length(struct event_data *ev_data) {
         if (bytearray_clear(ev_data->content_length_header_value_ref) < 0) {
             goto error;
         }
-        if (bytearray_append(ev_data->content_length_header_value_ref, new_len_buf,
-                new_len_buf_len) < 0) {
+        if (bytearray_append(ev_data->content_length_header_value_ref,
+                new_len_buf, new_len_buf_len) < 0) {
+            goto error;
+        }
+
+        /* Other functions expect headers to be NUL terminated */
+        if (bytearray_nul_terminate(ev_data->content_length_header_value_ref)
+                < 0) {
             goto error;
         }
 
@@ -558,9 +564,12 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
             }
         }
 
-        log_dbg("New cookie: \"%.*s\"\n",
-                (int) ev_data->cookie_header_value_ref->len,
-                ev_data->cookie_header_value_ref->data);
+        /* Other functions expect headers to be NUL terminated */
+        if (bytearray_nul_terminate(c) < 0) {
+            goto error;
+        }
+
+        log_dbg("New cookie: \"%s\"\n", c->data);
     }
 
     return 0;
