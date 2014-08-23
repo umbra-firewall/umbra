@@ -8,12 +8,12 @@ char *error_page_buf = NULL;
 size_t error_page_len;
 
 /* Send a error page back on a socket */
-int send_error_page(int sock) {
-    if (sendall(sock, HTTP_RESPONSE_FORBIDDEN, sizeof(HTTP_RESPONSE_FORBIDDEN))
+int send_error_page(struct fd_ctx *fd_ctx) {
+    if (sendall(fd_ctx, HTTP_RESPONSE_FORBIDDEN, sizeof(HTTP_RESPONSE_FORBIDDEN))
             < 0) {
         return -1;
     }
-    if (sendall(sock, error_page_buf, error_page_len) < 0) {
+    if (sendall(fd_ctx, error_page_buf, error_page_len) < 0) {
         return -1;
     }
     return 0;
@@ -30,49 +30,58 @@ int http_parser_method_to_shim(enum http_method method) {
 }
 
 /* Initialize error page */
-void init_error_page(char *error_page_file) {
+int init_error_page(char *error_page_file) {
     if (error_page_file == NULL) {
-        error_page_len = sizeof(DEFAULT_ERROR_PAGE_STR);
+        error_page_len = sizeof(DEFAULT_ERROR_PAGE_STR) - 1;
         error_page_buf = malloc(error_page_len);
         if (error_page_buf == NULL) {
             perror("malloc");
-            exit(EXIT_FAILURE);
+            return -1;
         }
         memcpy(error_page_buf, DEFAULT_ERROR_PAGE_STR, error_page_len);
+
+        return 0;
     } else {
         FILE *f = fopen(error_page_file, "r");
         if (f == NULL) {
             log_error("Failed to open error page file \"%s\"\n",
                     error_page_file);
             perror("fopen");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         if (fseek(f, 0, SEEK_END) < 0) {
             perror("fseek");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         if ((error_page_len = ftell(f)) < 0) {
             perror("ftell");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         if (fseek(f, 0, SEEK_SET) < 0) {
             perror("fseek");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         error_page_buf = malloc(error_page_len);
         if (error_page_buf == NULL) {
             perror("malloc");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         if (fread(error_page_buf, 1, error_page_len, f) != error_page_len) {
             perror("fread");
-            exit(EXIT_FAILURE);
+            goto error;
         }
         if (fclose(f) == EOF) {
             log_error("Failed to close error page file\n");
             perror("fclose");
-            exit(EXIT_FAILURE);
+            goto error;
         }
+        return 0;
+error:
+        if (f != NULL) {
+            fclose(f);
+        }
+        free(error_page_buf);
+        return -1;
     }
 }
 
@@ -257,7 +266,7 @@ int send_http_headers(struct event_data *ev_data) {
 
     /* Send buffer */
     log_trace("Sending header buffer\n");
-    if (sendall(ev_data->send_fd, send_buf, send_buf_len) < 0) {
+    if (sendall(&ev_data->send_fd, send_buf, send_buf_len) < 0) {
         goto error;
     }
 

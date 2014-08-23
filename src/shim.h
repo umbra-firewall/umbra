@@ -25,6 +25,7 @@
 
 #define SHIM_VERSION "v0.5.7"
 
+#define DEFAULT_SERVER_HOST "localhost"
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
 
@@ -51,20 +52,23 @@
     \
     /* Optional args */ \
     XX(6, "error-page", false, true, error_page_file, \
-            "file containing contents for error page")
+            "file containing contents for error page") \
+    XX(7, "server-host", false, true, server_hostname, \
+            "IP address or hostname of webserver. " \
+            "Defaults to " DEFAULT_SERVER_HOST ".")
 
 #define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
-    {name, required ? required_argument : optional_argument, NULL, 0},
+    {name, required_argument, NULL, 0},
 
 #define ARGUMENT_USAGE_FORMAT "--%-16s    %s\n"
 
 #define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
-    if (required) {\
+    if ((enabled) && (required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
 #define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
-    if (!required) {\
+    if ((enabled) && !(required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
@@ -77,20 +81,26 @@ struct variable_enabled {
     {&var, enabled, required},
 
 #define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
-    log_dbg("  %s=%s\n", name, var ? var : "NULL");
+    if (enabled) {\
+        log_dbg("  %s=%s\n", name, var ? var : "NULL"); \
+    }
 
 
 /* Global variables */
 extern char *tls_cert_file;
 extern char *tls_key_file;
+extern char *server_hostname;
+extern SSL_CTX* ssl_ctx_server;
+extern SSL_CTX* ssl_ctx_client;
 
 
 /* Function prototypes */
 
 /* Initialization functions */
-void init_structures(char *error_page_file);
-void init_page_conf();
-void init_ssl();
+int init_structures(char *error_page_file);
+int init_page_conf();
+int init_ssl();
+int init_ssl_ctx();
 void free_ssl();
 
 /* Event handlers */
@@ -108,7 +118,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len);
 void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
-void check_header_pair(struct event_data *ev_data);
+int check_header_pair(struct event_data *ev_data);
 
 /* Feature check helpers */
 struct page_conf *url_find_matching_page(char *url, size_t len);
@@ -138,8 +148,8 @@ int flush_server_event(struct event_data *server_ev_data);
 /* Util functions */
 int fill_rand_bytes(char *buf, size_t len);
 void print_usage(char **argv);
-void parse_program_arguments(int argc, char **argv);
 int set_up_socket_listener(char *port_str);
 int init_listen_event_data(struct epoll_event *e, int efd, int sfd);
+int parse_program_arguments(int argc, char **argv);
 
 #endif
