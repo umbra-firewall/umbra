@@ -41,7 +41,8 @@ struct event_data {
     bytearray_t *header_field;
     bytearray_t *header_value;
 
-    /* Array of all header fields/values */
+    /* Array of all header fields/values, whose entries are assumed to be NUL
+     * terminated. */
     struct_array_t *all_header_fields;
     struct_array_t *all_header_values;
 
