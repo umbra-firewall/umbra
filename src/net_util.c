@@ -67,7 +67,7 @@ int create_and_connect(char *port) {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if ((rv = getaddrinfo("127.0.0.1", port, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(server_hostname, port, &hints, &servinfo)) != 0) {
         log_warn("getaddrinfo: %s\n", gai_strerror(rv));
         rc = -1;
         goto error;

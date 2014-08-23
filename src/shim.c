@@ -13,6 +13,7 @@
 char *shim_http_port_str = NULL, *server_http_port_str = NULL;
 char *shim_tls_port_str = NULL, *server_tls_port_str = NULL;
 char *tls_cert_file = NULL, *tls_key_file = NULL;
+char *server_hostname = DEFAULT_SERVER_HOST;
 
 #if ENABLE_HTTPS
 SSL_CTX *ssl_ctx_server;
@@ -1131,6 +1132,11 @@ int init_structures(char *error_page_file) {
     return 0;
 }
 
+void parse_program_arguments_error(char **argv) {
+    print_usage(argv);
+    exit(EXIT_FAILURE);
+}
+
 /* Print usage information for shim */
 void print_usage(char **argv) {
     printf("Shim %s\n", SHIM_VERSION);
@@ -1161,9 +1167,12 @@ int parse_program_arguments(int argc, char **argv) {
     };
 
     while (1) {
-        /* getopt_long stores the option index here. */
         int option_index = 0;
-        c = getopt_long(argc, argv, "", long_options, &option_index);
+
+        /* '-' causes getopt_long to return 1 for extra arguments */
+        char optstring[] = "-";
+
+        c = getopt_long_only(argc, argv, optstring, long_options, &option_index);
 
         /* Detect the end of the options. */
         if (c == -1) {
@@ -1172,22 +1181,27 @@ int parse_program_arguments(int argc, char **argv) {
 
         switch (c) {
         case 0:
-            if (!optarg) {
+            if (optarg == NULL) {
                 log_error("getopt_long did not set optarg\n");
                 return -1;
             }
             if (variable_arr[option_index].enabled) {
                 *variable_arr[option_index].variable = optarg;
+            } else {
+                parse_program_arguments_error(argv);
             }
             break;
 
+        case 1:
+            /* Argument without corresponding option */
+            /* Fallthrough to error case*/
         case '?':
-            print_usage(argv);
-            exit(EXIT_FAILURE);
+            parse_program_arguments_error(argv);
             break;
 
         default:
-            log_error("Argument parsing case not handled unexpectedly\n");
+            log_error("getopt() parsing case %d not handled "
+                    "unexpectedly\n", c);
             return -1;
         }
     }
@@ -1201,6 +1215,7 @@ int parse_program_arguments(int argc, char **argv) {
             printf("Argument \"--%s\" not specified\n", long_options[i].name);
         }
     }
+
     if (found_error) {
         print_usage(argv);
         exit(EXIT_FAILURE);

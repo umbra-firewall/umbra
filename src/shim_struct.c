@@ -92,8 +92,11 @@ int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls, bool is_server)
 
     return 0;
 
+#if ENABLE_HTTPS
 error:
+
     return -1;
+#endif
 }
 
 /* Free memory associated with fd_ctx */

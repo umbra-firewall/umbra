@@ -25,6 +25,7 @@
 
 #define SHIM_VERSION "v0.5.7"
 
+#define DEFAULT_SERVER_HOST "localhost"
 #define MAXEVENTS 256
 #define READ_BUF_SIZE 4096
 
@@ -51,20 +52,23 @@
     \
     /* Optional args */ \
     XX(6, "error-page", false, true, error_page_file, \
-            "file containing contents for error page")
+            "file containing contents for error page") \
+    XX(7, "server-host", false, true, server_hostname, \
+            "IP address or hostname of webserver. " \
+            "Defaults to " DEFAULT_SERVER_HOST ".")
 
 #define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
-    {name, required ? required_argument : optional_argument, NULL, 0},
+    {name, required_argument, NULL, 0},
 
 #define ARGUMENT_USAGE_FORMAT "--%-16s    %s\n"
 
 #define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
-    if (required) {\
+    if ((enabled) && (required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
 #define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
-    if (!required) {\
+    if ((enabled) && !(required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
@@ -77,12 +81,15 @@ struct variable_enabled {
     {&var, enabled, required},
 
 #define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
-    log_dbg("  %s=%s\n", name, var ? var : "NULL");
+    if (enabled) {\
+        log_dbg("  %s=%s\n", name, var ? var : "NULL"); \
+    }
 
 
 /* Global variables */
 extern char *tls_cert_file;
 extern char *tls_key_file;
+extern char *server_hostname;
 extern SSL_CTX* ssl_ctx_server;
 extern SSL_CTX* ssl_ctx_client;
 
