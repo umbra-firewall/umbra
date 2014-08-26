@@ -212,7 +212,7 @@ int send_http_headers(struct event_data *ev_data) {
                 (int) ev_data->url->len, ev_data->url->data,
                 ev_data->parser.http_major, ev_data->parser.http_minor,
                 ev_data->http_msg_newline);
-        if (rc > header_len_estimate || rc < 0) {
+        if (rc >= header_len_estimate || rc < 0) {
             log_error("rc=%d, header_len_estimate=%d\n", rc, header_len_estimate);
             goto error;
         }
@@ -224,7 +224,7 @@ int send_http_headers(struct event_data *ev_data) {
                 ev_data->parser.http_major, ev_data->parser.http_minor,
                 ev_data->parser.status_code, (int) phrase_len, reason_phrase,
                 ev_data->http_msg_newline);
-        if (rc > header_len_estimate || rc < 0) {
+        if (rc >= header_len_estimate || rc < 0) {
             log_error("rc=%d, header_len_estimate=%d\n", rc, header_len_estimate);
             goto error;
         }
@@ -245,7 +245,7 @@ int send_http_headers(struct event_data *ev_data) {
                 ev_data->all_header_fields->data[i]->data,
                 ev_data->all_header_values->data[i]->data,
                 ev_data->http_msg_newline);
-        if (rc > header_len_estimate || rc < 0) {
+        if (rc >= header_len_estimate || rc < 0) {
             log_error("rc=%d, header_len_estimate=%d\n", rc,
                     header_len_estimate);
             goto error;

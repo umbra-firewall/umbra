@@ -16,6 +16,10 @@ typedef enum {
     CLIENT_LISTENER, SERVER_LISTENER
 } event_t;
 
+/* Indicates what has been received */
+typedef enum {
+    CHUNK_SZ, CHUNK_SZ_LF, CHUNK_BODY, CHUNK_BODY_CR, CHUNK_BODY_LF
+} chunk_state_t;
 
 /* Structures */
 
@@ -45,11 +49,13 @@ struct event_data {
     /* Do not free; references to members of all_header struct_array */
     bytearray_t *cookie_header_value_ref;
     bytearray_t *content_length_header_value_ref;
+    bytearray_t *chunk;
+    uint64_t remaining_chunk_bytes;
 
     struct_array_t *cookie_name_array;
     struct_array_t *cookie_value_array;
 
-    long long content_original_length;
+    int64_t content_original_length;
 #endif
 
     /* Current header field/value */
@@ -62,6 +68,10 @@ struct event_data {
     struct_array_t *all_header_values;
 
     event_t type : 8;
+
+#if ENABLE_SESSION_TRACKING
+    chunk_state_t chunk_state : 8;
+#endif
 
     /* Boolean values */
     bool is_cancelled : 1;
@@ -76,6 +86,7 @@ struct event_data {
 #if ENABLE_SESSION_TRACKING
     bool content_length_specified : 1;
     bool chunked_encoding_specified : 1;
+    bool on_last_chunk : 1;
     bool found_shim_session_cookie : 1;
 #endif
 

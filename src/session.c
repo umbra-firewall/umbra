@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <inttypes.h>
 #include "session.h"
 #include "log.h"
 
@@ -347,6 +348,9 @@ int populate_set_cookie_header_value(char *buf, size_t buf_len,
 
     int output_len = snprintf(buf, buf_len, SET_COOKIE_HEADER_VALUE_FORMAT,
             token);
+    if (output_len >= buf_len || output_len < 0) {
+        return -1;
+    }
 
     return output_len;
 }
@@ -412,7 +416,7 @@ int update_original_content_length(struct event_data *ev_data) {
         return -1;
     }
 
-    if (sscanf(ev_data->content_length_header_value_ref->data, "%lld",
+    if (sscanf(ev_data->content_length_header_value_ref->data, "%" SCNd64,
             &ev_data->content_original_length) != 1) {
         log_error("Could not read Content-Length value: %.*s\n",
                 (int) ev_data->content_length_header_value_ref->len,
@@ -425,7 +429,7 @@ int update_original_content_length(struct event_data *ev_data) {
 
 /* If Content-Length header specified, then returns the Content-Length an
  * a long long. Otherwise, returns -1. */
-long long get_original_content_length(struct event_data *ev_data) {
+int64_t get_original_content_length(struct event_data *ev_data) {
     return ev_data->content_original_length;
 }
 
@@ -437,7 +441,7 @@ int set_new_content_length(struct event_data *ev_data) {
         return 0;
     }
 
-    size_t additional_length = 0;
+    int64_t additional_length = 0;
 
     /* Account for JS snippet length that is to be sent. */
     if (ev_data->type == SERVER_LISTENER
@@ -460,18 +464,18 @@ int set_new_content_length(struct event_data *ev_data) {
         log_trace("Replacing Content-Length: original=%s\n",
                 ev_data->content_length_header_value_ref->data);
         /* Read original value */
-        long long original_len = get_original_content_length(ev_data);
+        int64_t original_len = get_original_content_length(ev_data);
         if (original_len < 0) {
             goto error;
         }
 
-        long long new_len = original_len + additional_length;
+        int64_t new_len = original_len + additional_length;
 
         /* Write new value to string */
         char new_len_buf[ev_data->content_length_header_value_ref->len + 10];
         int new_len_buf_len = snprintf(new_len_buf, sizeof(new_len_buf),
-                "%lld", new_len);
-        if (new_len_buf_len < 0) {
+                "%" PRId64, new_len);
+        if (new_len_buf_len >= sizeof(new_len_buf) || new_len_buf_len < 0) {
             log_error("Could not write new calculated Content-Length "
                     "to buffer\n");
             goto error;

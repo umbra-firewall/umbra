@@ -124,6 +124,10 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
 
     ev_data->type = type;
 
+#if ENABLE_SESSION_TRACKING
+    ev_data->chunk_state = CHUNK_SZ;
+#endif
+
     bool listen_is_server = (type == CLIENT_LISTENER);
     bool send_is_server = (type == SERVER_LISTENER);
 
@@ -166,6 +170,11 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
 
     if ((ev_data->cookie_value_array = struct_array_new()) == NULL) {
         log_warn("Allocating new struct array failed\n");
+        goto error;
+    }
+
+    if ((ev_data->chunk = bytearray_new()) == NULL) {
+        log_warn("Allocating new bytearray failed\n");
         goto error;
     }
 
@@ -232,6 +241,10 @@ void reset_event_data(struct event_data *ev) {
 
     ev->http_msg_newline = NULL;
 
+#if ENABLE_SESSION_TRACKING
+    ev->chunk_state = CHUNK_SZ;
+#endif
+
     bytearray_clear(ev->url);
     bytearray_clear(ev->body);
     bytearray_clear(ev->headers_cache);
@@ -242,6 +255,7 @@ void reset_event_data(struct event_data *ev) {
 
     struct_array_clear(ev->cookie_name_array, true);
     struct_array_clear(ev->cookie_value_array, true);
+    bytearray_clear(ev->chunk);
 
     ev->content_original_length = -1;
 #endif
@@ -264,6 +278,7 @@ void reset_event_data(struct event_data *ev) {
 #if ENABLE_SESSION_TRACKING
     ev->content_length_specified = false;
     ev->chunked_encoding_specified = false;
+    ev->on_last_chunk = false;
     ev->found_shim_session_cookie = false;
 #endif
 
@@ -302,6 +317,7 @@ void free_event_data(struct event_data *ev) {
 #if ENABLE_SESSION_TRACKING
     struct_array_free(ev->cookie_name_array, true);
     struct_array_free(ev->cookie_value_array, true);
+    bytearray_free(ev->chunk);
 #endif
 
     bytearray_free(ev->header_field);

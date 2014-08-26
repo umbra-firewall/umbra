@@ -40,6 +40,9 @@
 #define CHUNKED "chunked"
 #define CHUNKED_STRLEN (sizeof(CHUNKED) - 1)
 
+#define TRAILERS "Trailers"
+#define TRAILERS_STRLEN (sizeof(TRAILERS) - 1)
+
 #define CONTENT_ENCODING_HEADER "Content-Encoding"
 #define CONTENT_ENCODING_HEADER_STRLEN \
     (sizeof(CONTENT_ENCODING_HEADER) - 1)
@@ -95,7 +98,7 @@ bool is_session_expired(struct session *s);
 int get_num_active_sessions();
 int add_set_cookie_header(struct event_data *ev_data);
 int update_original_content_length(struct event_data *ev_data);
-long long get_original_content_length(struct event_data *ev_data);
+int64_t get_original_content_length(struct event_data *ev_data);
 int set_new_content_length(struct event_data *ev_data);
 int remove_shim_sessid_cookie(struct event_data *ev_data);
 int add_cookie_piece(bytearray_t *c, int i, struct event_data *ev_data);

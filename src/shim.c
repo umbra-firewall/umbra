@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <getopt.h>
 #include <errno.h>
 #include <openssl/engine.h>
@@ -134,7 +135,7 @@ int check_header_pair(struct event_data *ev_data) {
             || (field_len == TE_HEADER_STRLEN
                     && strcasecmp(TE_HEADER, field) == 0)) {
 
-        if (field_len == CHUNKED_STRLEN && strcasecmp(CHUNKED, field) == 0) {
+        if (value_len == CHUNKED_STRLEN && strcasecmp(CHUNKED, value) == 0) {
             /* Only chunked encoding is allowed */
 #if ENABLE_SESSION_TRACKING
             log_dbg("Chunked encoding specified\n");
@@ -152,6 +153,10 @@ int check_header_pair(struct event_data *ev_data) {
             goto error;
         }
 
+    } else if (field_len == TRAILERS_STRLEN
+            && strcasecmp(TRAILERS, field) == 0) {
+        log_warn("Trailers not supported for chunked encoding\n");
+        goto error;
     }
 #if ENABLE_SESSION_TRACKING
     else if (field_len == CONTENT_ENCODING_HEADER_STRLEN
@@ -689,7 +694,9 @@ int flush_server_event(struct event_data *server_ev_data) {
     }
 
 #if ENABLE_CSRF_PROTECTION
-    check_send_csrf_js_snippet(server_ev_data);
+    if (!server_ev_data->chunked_encoding_specified) {
+        check_send_csrf_js_snippet(server_ev_data);
+    }
 #endif
 
     reset_connection_info(server_ev_data->conn_info);
@@ -792,11 +799,28 @@ int handle_client_server_event(struct epoll_event *ev) {
                 body_len = headers_cache->len - headers_len;
 
                 done |= do_http_parse_send(headers_cache->data,
-                        headers_cache->len, body_ptr, body_len,
+                        headers_cache->len, body_ptr, 0,
                         ev_data, parser_settings, true);
 
                 /* Done with the headers cache */
                 ev_data->headers_have_been_sent = true;
+
+                /* Handle body after headers */
+                log_dbg("Sending body after headers\n");
+
+#if ENABLE_SESSION_TRACKING
+                if (ev_data->chunked_encoding_specified) {
+                    done |= handle_chunked_parse_send(body_ptr, body_len,
+                            parser_settings, ev_data);
+                    continue;
+                }
+#endif
+
+                if (body_len > 0) {
+                    done |= do_http_parse_send(NULL, 0, body_ptr, body_len,
+                            ev_data, parser_settings, false);
+                }
+
                 continue;
             }
 
@@ -816,13 +840,16 @@ int handle_client_server_event(struct epoll_event *ev) {
             continue;
         }
 
+        log_dbg("Sending data normally\n");
+
 #if ENABLE_SESSION_TRACKING
         if (ev_data->chunked_encoding_specified) {
-            //@Todo(Travis) handle chunked encoding
+            done |= handle_chunked_parse_send(buf, count, parser_settings,
+                    ev_data);
+            continue;
         }
 #endif
 
-        log_dbg("Sending data normally\n");
         done |= do_http_parse_send(NULL, 0, buf, count, ev_data,
                 parser_settings, false);
     }
@@ -830,7 +857,7 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 #if ENABLE_CSRF_PROTECTION
     /* Send CSRF token JavaScript snippet */
-    if (type == SERVER_LISTENER) {
+    if (!ev_data->chunked_encoding_specified) {
         done |= check_send_csrf_js_snippet(ev_data);
     }
 #endif
@@ -851,36 +878,273 @@ check_cancelled:
     return done;
 }
 
+#if ENABLE_SESSION_TRACKING
+/* Handles sending/parsing when chunked encoding is used. */
+int handle_chunked_parse_send(char *buf, size_t buf_len,
+        http_parser_settings *parser_settings, struct event_data *ev_data) {
+
+    size_t add_bytes;
+    char *cr;
+    bool fallthrough;
+    bool finished_last_chunk = false;
+    uint64_t chunk_bytes;
+    int done = 0;
+
+    log_trace("Handling chunked encoding\n");
+
+    while (buf_len > 0 && !finished_last_chunk) {
+        switch (ev_data->chunk_state) {
+        case CHUNK_SZ: /* Still getting chunk size */
+            log_dbg("  Getting chunk size\n");
+
+            /* buf points to digits CR */
+
+            if ((cr = memchr(buf, '\r', buf_len)) != NULL) {
+                /* Found CR, will move to next state*/
+                add_bytes = cr - buf;
+                fallthrough = true;
+                ev_data->chunk_state = CHUNK_SZ_LF;
+            } else {
+                /* Did not find CR */
+                add_bytes = buf_len;
+                fallthrough = false;
+            }
+            if (bytearray_append(ev_data->chunk, buf, add_bytes) < 0) {
+                goto error;
+            }
+
+            buf += add_bytes;
+            buf_len -= add_bytes;
+
+            if (ev_data->chunk->len > MAX_CHUNK_SIZE_LEN) {
+                log_warn("Did not find CR in chunk header after %zd bytes\n",
+                        ev_data->chunk->len);
+                goto error;
+            }
+
+            if (!fallthrough) {
+                /* buf_len may be 0 if CR was not found. Because buf_len is
+                 * unsigned, and we check if it is > 0, we need to make sure it
+                 * does not wrap around. */
+                continue;
+            }
+
+            /* Shift stream forward past CR */
+            log_dbg("  Got chunk size CR\n");
+            buf += 1;
+            buf_len -= 1;
+
+            /* Check if buf_len is 0 */
+            continue;
+
+        case CHUNK_SZ_LF:
+            /* Got CR, waiting for LF; buf points to LF */
+            if (*buf != '\n') {
+                log_warn("Did not find expected LF in chunk header\n");
+                goto error;
+            }
+
+            ev_data->chunk_state = CHUNK_BODY;
+            buf += 1;
+            buf_len -= 1;
+
+            /* buf points to body */
+
+            /* Got LF, waiting for body */
+            log_dbg("  Got chunk size LF, reading chunk size\n");
+
+            /* Add header CRLF */
+            if (bytearray_append(ev_data->chunk, CRLF, 2) < 0) {
+                goto error;
+            }
+
+            /* Make it safe to use C string functions */
+            if (bytearray_nul_terminate(ev_data->chunk) < 0) {
+                goto error;
+            }
+
+            /* Read chunk size */
+            if (sscanf(ev_data->chunk->data, "%" SCNx64 CRLF,
+                    &ev_data->remaining_chunk_bytes) != 1) {
+                perror("sscanf");
+                log_error("Reading chunk size failed\n");
+                goto error;
+            }
+
+            log_dbg("    chunk size=%zd\n", ev_data->remaining_chunk_bytes);
+
+            if (ev_data->remaining_chunk_bytes == 0) {
+                log_dbg("  Found last chunk\n");
+                ev_data->on_last_chunk = true;
+                check_send_csrf_js_snippet(ev_data);
+
+                /* Skip CHUNK_BODY state */
+                ev_data->chunk_state = CHUNK_BODY_CR;
+            }
+
+            /* Send chunk header */
+            done |= do_http_parse_send(NULL, 0, ev_data->chunk->data,
+                    ev_data->chunk->len, ev_data, parser_settings, false);
+            if (done) {
+                goto error;
+            }
+
+            continue;
+
+        case CHUNK_BODY:
+            /* buf points to body */
+
+            chunk_bytes = MIN(buf_len, ev_data->remaining_chunk_bytes);
+
+            log_dbg("  processing body chunk len %" PRId64 "\n", chunk_bytes);
+
+            done |= do_http_parse_send(NULL, 0, buf, chunk_bytes, ev_data,
+                    parser_settings, false);
+            if (done) {
+                goto error;
+            }
+
+            ev_data->remaining_chunk_bytes -= chunk_bytes;
+            buf += chunk_bytes;
+            buf_len -= chunk_bytes;
+
+            if (ev_data->remaining_chunk_bytes == 0) {
+                /* Chunk body is finished */
+                ev_data->chunk_state = CHUNK_BODY_CR;
+            }
+
+            continue;
+
+        case CHUNK_BODY_CR:
+            log_dbg("  processing traliing body CR\n");
+
+            if (*buf != '\r') {
+                log_warn("Did not find expected CR after chunk body\n");
+                goto error;
+            }
+
+            buf += 1;
+            buf_len -= 1;
+            ev_data->chunk_state = CHUNK_BODY_LF;
+
+            continue;
+
+        case CHUNK_BODY_LF:
+            log_dbg("  processing traliing body LF\n");
+
+            if (*buf != '\n') {
+                log_warn("Did not find expected LF after chunk body\n");
+                goto error;
+            }
+
+            buf += 1;
+            buf_len -= 1;
+
+            /* Send trailing CRLF */
+            done |= do_http_parse_send(NULL, 0, CRLF, 2, ev_data,
+                parser_settings, false);
+            if (done) {
+                goto error;
+            }
+
+            /* Reset chunk state */
+            ev_data->chunk_state = CHUNK_SZ;
+            if (bytearray_clear(ev_data->chunk) < 0) {
+                goto error;
+            }
+
+            if (ev_data->on_last_chunk) {
+                finished_last_chunk = true;
+            }
+
+            continue;
+
+        default:
+            log_error("Unhandled chunk state");
+        }
+    }
+
+    return done;
+
+error:
+    cancel_connection(ev_data);
+    return 1;
+}
+#endif
+
 #if ENABLE_CSRF_PROTECTION
 /* Sends CSRF JS snippet if page is configured for it */
 int check_send_csrf_js_snippet(struct event_data *ev_data) {
     int done = 0;
+    bytearray_t *send_array = NULL;
+
     log_dbg("Checking if page has CSRF protection\n");
-    if (!is_conn_cancelled(ev_data) && ev_data->conn_info->page_match
+    if (ev_data->type == SERVER_LISTENER && !is_conn_cancelled(ev_data)
+            && ev_data->conn_info->page_match
             && ev_data->conn_info->page_match->has_csrf_form
-            && !ev_data->sent_js_snippet && ev_data->msg_complete) {
+            && !ev_data->sent_js_snippet
+            && (ev_data->msg_complete || ev_data->chunked_encoding_specified)) {
         log_trace("Page has CSRF protected form; sending JS snippet\n");
         int s;
         char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
+        char header_buf[20];
         int snippet_len = snprintf(js_snippet, sizeof(js_snippet),
                 INSERT_HIDDEN_TOKEN_JS_FORMAT,
                 ev_data->conn_info->session->session_id);
-        if (snippet_len < 0) {
+        if (snippet_len >= sizeof(js_snippet) || snippet_len < 0) {
             perror("snprintf");
-            cancel_connection(ev_data);
-            done = 1;
+            goto error;
         }
-        s = sendall(&ev_data->send_fd, js_snippet, snippet_len);
+
+        if ((send_array = bytearray_new()) == NULL) {
+            goto error;
+        }
+
+        /* Send header if chunked encoding */
+        if (ev_data->chunked_encoding_specified) {
+            /* Write hex length to buffer with CRLF */
+            int header_buf_len = snprintf(header_buf, sizeof(header_buf),
+                    "%x\r\n", snippet_len);
+            if (header_buf_len >= sizeof(header_buf) || header_buf_len < 0) {
+                log_error("chunked header buffer too small\n");
+                goto error;
+            }
+
+            /* Add buffer to send array */
+            if (bytearray_append(send_array, header_buf, header_buf_len) < 0) {
+                goto error;
+            }
+        }
+
+        /* Add JS snippet */
+        if (bytearray_append(send_array, js_snippet, snippet_len) < 0) {
+            goto error;
+        }
+
+        /* Add trailing CRLF */
+        if (ev_data->chunked_encoding_specified) {
+            if (bytearray_append(send_array, CRLF, strlen(CRLF)) < 0) {
+                goto error;
+            }
+        }
+
+        s = sendall(&ev_data->send_fd, send_array->data, send_array->len);
         if (s < 0) {
-            log_error("sendall failed\n");
-            cancel_connection(ev_data);
-            done = 1;
+            goto error;
         }
+
         ev_data->sent_js_snippet = true;
     } else {
         log_dbg("Not sending JS snippet\n");
     }
+
+    bytearray_free(send_array);
     return done;
+
+error:
+    bytearray_free(send_array);
+    cancel_connection(ev_data);
+    return 1;
 }
 #endif
 
