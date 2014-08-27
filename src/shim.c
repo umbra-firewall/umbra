@@ -788,10 +788,12 @@ int handle_client_server_event(struct epoll_event *ev) {
                 size_t body_len = 0;
                 /* Set newline type */
                 if (crlf_end) {
+                    /* CRLF line endings */
                     ev_data->http_msg_newline = CRLF;
                     body_ptr = crlf_end + strlen(CRLF CRLF);
 
                 } else {
+                    /* LF line endings */
                     ev_data->http_msg_newline = LF;
                     body_ptr = lf_end + strlen(LF LF);
                 }
@@ -799,7 +801,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                 body_len = headers_cache->len - headers_len;
 
                 done |= do_http_parse_send(headers_cache->data,
-                        headers_cache->len, body_ptr, 0,
+                        headers_len, body_ptr, 0,
                         ev_data, parser_settings, true);
 
                 /* Done with the headers cache */
