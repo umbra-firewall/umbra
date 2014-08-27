@@ -39,55 +39,65 @@
 #define XSTR(a) STR(a)
 #define STR(a) #a
 
-/* index, name, required, enabled, var, description */
+/* (index, name, required, enabled, var, arg_requirement, description)
+ * arg_requirement is one of:
+ *      no_argument (assumed to be type bool)
+ *      required_argument (assumbed to be type char *)
+ */
 #define ARGUMENT_MAP(XX) \
     /* Required args */ \
     XX(0, "shim-http-port", true, true, shim_http_port_str, \
-            "HTTP port on which shim should listen") \
+            required_argument, "HTTP port on which shim should listen") \
     XX(1, "server-http-port", true, true, server_http_port_str, \
-            "port of listening HTTP server") \
+            required_argument, "port of listening HTTP server") \
     XX(2, "shim-tls-port", true, ENABLE_HTTPS, shim_tls_port_str, \
-            "HTTPS port on which shim should listen") \
+            required_argument, "HTTPS port on which shim should listen") \
     XX(3, "server-tls-port", true, ENABLE_HTTPS, server_tls_port_str, \
-            "port of listening HTTPS server") \
+            required_argument, "port of listening HTTPS server") \
     XX(4, "tls-cert", true, ENABLE_HTTPS, tls_cert_file, \
-            "PEM file with TLS certificate chain") \
+            required_argument, "PEM file with TLS certificate chain") \
     XX(5, "tls-key", true, ENABLE_HTTPS, tls_key_file, \
-            "PEM file with server private key") \
+            required_argument, "PEM file with server private key") \
     \
     /* Optional args */ \
     XX(6, "error-page", false, true, error_page_file, \
-            "file containing contents for error page") \
+            required_argument, "file containing contents for error page") \
     XX(7, "server-host", false, true, server_hostname, \
-            "IP address or hostname of webserver. " \
-            "Defaults to " DEFAULT_SERVER_HOST ".")
+            required_argument, "IP address or hostname of webserver. " \
+            "Defaults to " DEFAULT_SERVER_HOST ".") \
+    XX(8, "print-config", false, true, print_config, \
+            no_argument, "Print compiled in configuration data")
 
-#define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, description) \
-    {name, required_argument, NULL, 0},
+#define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
+    {name, arg_requirement, NULL, 0},
 
 #define ARGUMENT_USAGE_FORMAT "--%-16s    %s\n"
 
-#define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, description) \
+#define PRINT_USAGE_REQUIRED_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
     if ((enabled) && (required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
-#define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, description) \
+#define PRINT_USAGE_OPTIONAL_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
     if ((enabled) && !(required)) {\
         printf(ARGUMENT_USAGE_FORMAT, name, description); \
     }
 
 struct variable_enabled {
-    char **variable;
+    void *variable;
     bool enabled;
     bool required;
 };
-#define ARG_VARIABLE_LAMBDA(index, name, required, enabled, var, description) \
+#define ARG_VARIABLE_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
     {&var, enabled, required},
 
-#define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, description) \
+#define PRINT_ARGS_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
     if (enabled) {\
-        log_dbg("  %s=%s\n", name, var ? var : "NULL"); \
+        if (arg_requirement == no_argument) { \
+            log_dbg("  %s=%s\n", name, var ? "true" : "false"); \
+        } else { \
+            log_dbg("  %s=%s\n", name, var ? ((char *) var) : "NULL"); \
+        }\
     }
 
 

@@ -54,7 +54,6 @@ clean:
 
 # Create .deps directory
 .deps:
-	@rm -rf .deps
 	@mkdir .deps
 
 # Include each dependency file

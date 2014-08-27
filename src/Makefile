@@ -6,9 +6,10 @@ SHIM_SRC = shim.c shim.h http_parser.c http_parser.h \
     bytearray.c bytearray.h http_callbacks.c http_callbacks.h \
     session.c session.h http_util.c http_util.h net_util.c net_util.h \
     config.c config.h shim_struct.c shim_struct.h log.h \
-    struct_array.c struct_array.h
+    struct_array.c struct_array.h config_printer.c config_printer.h
 SHIM_OBJ = shim.o http_parser.o bytearray.o http_callbacks.o session.o \
-	http_util.o net_util.o shim_struct.o config.o struct_array.o
+	http_util.o net_util.o shim_struct.o config.o struct_array.o \
+	config_printer.o
 LDLIBS = -lssl -lcrypto
 
 CFILES=$(wildcard *.c)
@@ -45,9 +46,6 @@ shim-trace: $(SHIM_OBJ) trace.c
 $(BIN_NORMAL): $(SHIM_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
 
-config_printer: config_printer.c config.o
-	$(CC) $(CFLAGS_DEBUG) -o $@ $^
-
 clean:
 	rm -f *.o *.pyc $(BIN) gmon.out config.h config.c
 
@@ -57,7 +55,6 @@ clean:
 
 # Create .deps directory
 .deps:
-	@rm -rf .deps
 	@mkdir .deps
 
 # Include each dependency file

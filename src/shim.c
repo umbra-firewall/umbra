@@ -9,12 +9,14 @@
 #include "http_util.h"
 #include "net_util.h"
 #include "shim_struct.h"
+#include "config_printer.h"
 #include "log.h"
 
 char *shim_http_port_str = NULL, *server_http_port_str = NULL;
 char *shim_tls_port_str = NULL, *server_tls_port_str = NULL;
 char *tls_cert_file = NULL, *tls_key_file = NULL;
 char *server_hostname = DEFAULT_SERVER_HOST;
+bool print_config = false;
 
 #if ENABLE_HTTPS
 SSL_CTX *ssl_ctx_server;
@@ -1475,12 +1477,20 @@ int parse_program_arguments(int argc, char **argv) {
 
         switch (c) {
         case 0:
-            if (optarg == NULL) {
+            if (long_options[option_index].has_arg == required_argument
+                    && optarg == NULL) {
                 log_error("getopt_long did not set optarg\n");
                 return -1;
             }
             if (variable_arr[option_index].enabled) {
-                *variable_arr[option_index].variable = optarg;
+                if (long_options[option_index].has_arg == no_argument) {
+                    *((bool *) variable_arr[option_index].variable) = true;
+                } else if (long_options[option_index].has_arg
+                        == required_argument) {
+                    *((char **) variable_arr[option_index].variable) = optarg;
+                } else {
+                    log_error("Unhandled has_arg case\n");
+                }
             } else {
                 parse_program_arguments_error(argv);
             }
@@ -1500,11 +1510,17 @@ int parse_program_arguments(int argc, char **argv) {
         }
     }
 
+    if (print_config) {
+        print_configuration();
+        exit(EXIT_SUCCESS);
+    }
+
     bool found_error = false;
     int len = sizeof(variable_arr) / sizeof(struct variable_enabled);
     for (i = 0; i < len; i++) {
         struct variable_enabled *var = &variable_arr[i];
-        if (var->enabled && var->required && *var->variable == NULL) {
+        if (var->enabled && var->required
+                && *((char **) var->variable) == NULL) {
             found_error = true;
             printf("Argument \"--%s\" not specified\n", long_options[i].name);
         }

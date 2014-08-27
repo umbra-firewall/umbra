@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "shim.h"
 #include "config.h"
+#include "config_printer.h"
 
 #define TAB_SIZE 4
 
@@ -17,7 +18,7 @@
     printf("}\n"); \
     }
 
-void print_indent(int depth) {
+static void print_indent(int depth) {
     int i;
     for (i = 0; i < depth * TAB_SIZE; i++) {
         printf(" ");
@@ -29,7 +30,7 @@ void print_indent(int depth) {
             printf(#REQ "|"); \
         }
 
-void print_http_req_field(int r) {
+static void print_http_req_field(int r) {
     printf("|");
     print_http_req_part(HEAD);
     print_http_req_part(GET);
@@ -50,15 +51,7 @@ void print_whitelist(const char *w) {
     }
 }
 
-bool whitelist_char_allowed(const char *whitelist, const char x) {
-    unsigned const char c = (unsigned const char) x;
-    unsigned int byte = c / 8;
-    unsigned int bit = c % 8;
-    unsigned char mask = 1 << bit;
-    return (whitelist[byte] & mask) != 0;
-}
-
-void print_whitelist2(const char *w) {
+static void print_whitelist2(const char *w) {
     int i;
     for (i = 0; i < 256; i++) {
         if (whitelist_char_allowed(w, i)) {
@@ -82,7 +75,7 @@ void print_whitelist2(const char *w) {
 #define print_bool_field(item) printf_indent(depth + 1, "." #item " = %s\n", \
         p->item ? "TRUE" : "FALSE")
 
-void print_params(struct params *p, int depth) {
+static void print_params(struct params *p, int depth) {
     printf_indent(depth, "\"%s\" {\n", p->name);
     print_whitelist_field(whitelist);
     print_whitelist2_field(whitelist);
@@ -90,7 +83,7 @@ void print_params(struct params *p, int depth) {
     printf_indent(depth, "}\n");
 }
 
-void print_page_conf(struct page_conf *p, int depth) {
+static void print_page_conf(struct page_conf *p, int depth) {
     int i;
 
     printf_indent(depth, "\"%s\" {\n", p->name);
@@ -115,7 +108,7 @@ void print_page_conf(struct page_conf *p, int depth) {
     printf_indent(depth, "},\n\n");
 }
 
-int main(int argc, char **argv) {
+void print_configuration() {
     int i;
     init_config_vars();
 
@@ -149,6 +142,4 @@ int main(int argc, char **argv) {
     for (i = 0; i < PAGES_CONF_LEN; i++) {
         print_page_conf(&pages_conf[i], 0);
     }
-
-    return 0;
 }
