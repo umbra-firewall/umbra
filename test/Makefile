@@ -5,7 +5,7 @@ BIN_NORMAL = check_all check_all_dbg
 BIN = $(BIN_NORMAL)
 OBJ = check_all.o check_session.o
 
-FILTER_OUT := ../src/shim.c ../src/config_printer.c
+FILTER_OUT := ../src/shim.c
 SHIM_CFILES := $(filter-out $(FILTER_OUT),$(wildcard ../src/*.c))
 
 CFILES=$(wildcard *.c)

@@ -9,7 +9,8 @@ static struct event_data *ev_data = NULL;
 void test_cookie_remove_helper(char *cookie, char *expected,
         void (*runner)(char *, char *, int)) {
     /* Initialize */
-    ev_data = init_event_data(CLIENT_LISTENER, 0, 0, HTTP_REQUEST, NULL);
+    ev_data = init_event_data(CLIENT_LISTENER, 0, 0, false, false, HTTP_REQUEST,
+            NULL);
 
     ev_data->cookie_header_value_ref = BYTEARR_NEW(cookie);
 
