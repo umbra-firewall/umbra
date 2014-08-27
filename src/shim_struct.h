@@ -32,12 +32,11 @@ struct fd_ctx {
     SSL *ssl;
 #endif
     bool is_server : 1;
-    bool started_conn : 1;
 };
 
 struct event_data {
-    struct fd_ctx listen_fd;
-    struct fd_ctx send_fd;
+    struct fd_ctx *listen_fd;
+    struct fd_ctx *send_fd;
     http_parser parser;
     struct connection_info *conn_info;
     bytearray_t *url;
@@ -112,13 +111,13 @@ extern int num_conn_infos;
 /* Structure functions */
 struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         bool out_is_tls);
-struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
-        bool listen_is_tls, bool send_is_tls, enum http_parser_type parser_type,
+struct event_data *init_event_data(event_t type, struct fd_ctx *listen_fd,
+        struct fd_ctx *send_fd, enum http_parser_type parser_type,
         struct connection_info *conn_info);
-int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls,
-        bool is_server);
+struct fd_ctx *init_fd_ctx(int sock_fd, bool is_tls, bool is_server);
 void reset_event_data(struct event_data *ev);
 void reset_connection_info(struct connection_info *ci);
+void free_fd_ctx(struct fd_ctx *fd_ctx);
 void free_event_data(struct event_data *ev);
 void free_connection_info(struct connection_info *ci);
 void copy_default_params(struct page_conf *page_conf, struct params *params);

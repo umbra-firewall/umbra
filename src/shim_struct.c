@@ -11,6 +11,7 @@ struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         bool out_is_tls) {
     struct event_data *client_ev_data = NULL, *server_ev_data = NULL;
     struct connection_info *conn_info = NULL;
+    struct fd_ctx *in_fd_ctx = NULL, *out_fd_ctx = NULL;
     log_trace("init_conn_info() (%d total)\n", ++num_conn_infos);
 
     conn_info = calloc(1, sizeof(struct connection_info));
@@ -18,14 +19,22 @@ struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         goto fail;
     }
 
-    client_ev_data = init_event_data(CLIENT_LISTENER, infd, outfd, in_is_tls,
-            out_is_tls, HTTP_REQUEST, conn_info);
+    if ((in_fd_ctx = init_fd_ctx(infd, in_is_tls, true)) == NULL) {
+        goto fail;
+    }
+
+    if ((out_fd_ctx = init_fd_ctx(outfd, out_is_tls, false)) == NULL) {
+        goto fail;
+    }
+
+    client_ev_data = init_event_data(CLIENT_LISTENER, in_fd_ctx, out_fd_ctx,
+            HTTP_REQUEST, conn_info);
     if (client_ev_data == NULL) {
         goto fail;
     }
 
-    server_ev_data = init_event_data(SERVER_LISTENER, outfd, infd, out_is_tls,
-            in_is_tls, HTTP_RESPONSE, conn_info);
+    server_ev_data = init_event_data(SERVER_LISTENER, out_fd_ctx, in_fd_ctx,
+            HTTP_RESPONSE, conn_info);
     if (server_ev_data == NULL) {
         goto fail;
     }
@@ -40,14 +49,23 @@ fail:
 #ifdef TRACE
     num_conn_infos--;
 #endif
+    free_fd_ctx(in_fd_ctx);
+    free_fd_ctx(out_fd_ctx);
     free(client_ev_data);
     free(server_ev_data);
     free(conn_info);
     return NULL;
 }
 
-/* Initializes given fd_ctx. Returns 0 on success, -1 otherwise. */
-int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls, bool is_server) {
+/* Initializes given fd_ctx. Returns pointer to new fd_ctx on success, NULL
+ * otherwise.
+ */
+struct fd_ctx *init_fd_ctx(int sock_fd, bool is_tls, bool is_server) {
+    struct fd_ctx *fd_ctx = calloc(1, sizeof(struct fd_ctx));
+    if (fd_ctx == NULL) {
+        return NULL;
+    }
+
     fd_ctx->sock_fd = sock_fd;
     fd_ctx->is_tls = is_tls;
     fd_ctx->is_server = is_server;
@@ -90,12 +108,12 @@ int init_fd_ctx(struct fd_ctx *fd_ctx, int sock_fd, bool is_tls, bool is_server)
     }
 #endif
 
-    return 0;
+    return fd_ctx;
 
 #if ENABLE_HTTPS
 error:
-
-    return -1;
+    SSL_free(fd_ctx->ssl);
+    return NULL;
 #endif
 }
 
@@ -108,11 +126,13 @@ void free_fd_ctx(struct fd_ctx *fd_ctx) {
         }
     }
 #endif
+
+    free(fd_ctx);
 }
 
 /* Initialize event data structure */
-struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
-        bool listen_is_tls, bool send_is_tls, enum http_parser_type parser_type,
+struct event_data *init_event_data(event_t type, struct fd_ctx *listen_fd,
+        struct fd_ctx *send_fd, enum http_parser_type parser_type,
         struct connection_info *conn_info) {
 
     log_trace("Initializing new event_data\n");
@@ -128,18 +148,8 @@ struct event_data *init_event_data(event_t type, int listen_fd, int send_fd,
     ev_data->chunk_state = CHUNK_SZ;
 #endif
 
-    bool listen_is_server = (type == CLIENT_LISTENER);
-    bool send_is_server = (type == SERVER_LISTENER);
-
-    if (init_fd_ctx(&ev_data->listen_fd, listen_fd, listen_is_tls,
-            listen_is_server) < 0) {
-        goto error;
-    }
-
-    if (init_fd_ctx(&ev_data->send_fd, send_fd, send_is_tls, send_is_server)
-            < 0) {
-        goto error;
-    }
+    ev_data->listen_fd = listen_fd;
+    ev_data->send_fd = send_fd;
 
     ev_data->conn_info = conn_info;
     ev_data->http_msg_newline = NULL;
@@ -221,9 +231,6 @@ error:
 
     struct_array_free(ev_data->all_header_fields, true);
     struct_array_free(ev_data->all_header_values, true);
-
-    free_fd_ctx(&ev_data->listen_fd);
-    free_fd_ctx(&ev_data->send_fd);
 
     free(ev_data);
     return NULL;
@@ -326,9 +333,6 @@ void free_event_data(struct event_data *ev) {
     struct_array_free(ev->all_header_fields, true);
     struct_array_free(ev->all_header_values, true);
 
-    free_fd_ctx(&ev->listen_fd);
-    free_fd_ctx(&ev->send_fd);
-
     free(ev);
 }
 
@@ -337,15 +341,20 @@ void free_connection_info(struct connection_info *ci) {
     if (ci != NULL) {
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
         if (ci->client_ev_data) {
-            int listen_fd = ci->client_ev_data->listen_fd.sock_fd;
+            int listen_fd = ci->client_ev_data->listen_fd->sock_fd;
             if (listen_fd && close(listen_fd) != 0) {
                 perror("close");
             }
 
-            int send_fd = ci->client_ev_data->send_fd.sock_fd;
+            free_fd_ctx(ci->client_ev_data->listen_fd);
+
+            int send_fd = ci->client_ev_data->send_fd->sock_fd;
             if (send_fd && close(send_fd) != 0) {
                 perror("close");
             }
+
+            free_fd_ctx(ci->client_ev_data->send_fd);
+
             free_event_data(ci->client_ev_data);
         }
         free_event_data(ci->server_ev_data);

@@ -58,7 +58,7 @@ int create_and_bind(char *port) {
     return sfd;
 }
 
-/* Create listening socket */
+/* Connect to server, returning socket on success, -1 otherwise. */
 int create_and_connect(char *port) {
     int sockfd, rv, rc = 0;
     struct addrinfo hints, *servinfo = NULL, *p = NULL;

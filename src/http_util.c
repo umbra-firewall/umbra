@@ -266,7 +266,7 @@ int send_http_headers(struct event_data *ev_data) {
 
     /* Send buffer */
     log_trace("Sending header buffer\n");
-    if (sendall(&ev_data->send_fd, send_buf, send_buf_len) < 0) {
+    if (sendall(ev_data->send_fd, send_buf, send_buf_len) < 0) {
         goto error;
     }
 

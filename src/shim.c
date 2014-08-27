@@ -321,14 +321,14 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd,
         server_event.events = EPOLLIN | EPOLLET;
 
         s = epoll_ctl(efd, EPOLL_CTL_ADD,
-                conn_info->client_ev_data->listen_fd.sock_fd, &client_event);
+                conn_info->client_ev_data->listen_fd->sock_fd, &client_event);
         if (s == -1) {
             perror("epoll_ctl");
             goto error;
         }
 
         s = epoll_ctl(efd, EPOLL_CTL_ADD,
-                conn_info->server_ev_data->listen_fd.sock_fd, &server_event);
+                conn_info->server_ev_data->listen_fd->sock_fd, &server_event);
         if (s == -1) {
             perror("epoll_ctl");
             goto error;
@@ -744,7 +744,7 @@ int handle_client_server_event(struct epoll_event *ev) {
     /* Read into buffer */
     while (!done) {
         bool eagain = false;
-        count = fd_ctx_read(&ev_data->listen_fd, buf, READ_BUF_SIZE, &eagain);
+        count = fd_ctx_read(ev_data->listen_fd, buf, READ_BUF_SIZE, &eagain);
         if (count < 0) {
             if (eagain) {
                 /* We have read all data for now */
@@ -868,13 +868,13 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 check_cancelled:
     if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
-        if (send_error_page(&ev_data->listen_fd)) {
+        if (send_error_page(ev_data->listen_fd)) {
             log_info("Failed to send error page.\n");
         }
-        close(ev_data->listen_fd.sock_fd);
-        close(ev_data->send_fd.sock_fd);
-        ev_data->listen_fd.sock_fd = 0;
-        ev_data->send_fd.sock_fd = 0;
+        close(ev_data->listen_fd->sock_fd);
+        close(ev_data->send_fd->sock_fd);
+        ev_data->listen_fd->sock_fd = 0;
+        ev_data->send_fd->sock_fd = 0;
         log_info("Closed_connection\n");
         return 1;
     }
@@ -1132,7 +1132,7 @@ int check_send_csrf_js_snippet(struct event_data *ev_data) {
             }
         }
 
-        s = sendall(&ev_data->send_fd, send_array->data, send_array->len);
+        s = sendall(ev_data->send_fd, send_array->data, send_array->len);
         if (s < 0) {
             goto error;
         }
@@ -1231,7 +1231,7 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
     }
 
     /* Send rest of buf */
-    s = sendall(&ev_data->send_fd, body_buf, body_buf_len);
+    s = sendall(ev_data->send_fd, body_buf, body_buf_len);
     if (s < 0) {
         log_error("sendall failed\n");
         cancel_connection(ev_data);
@@ -1245,7 +1245,7 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
 void handle_event(int efd, struct epoll_event *ev, int sfd_http, int sfd_tls) {
     int done;
     struct event_data *ev_data = (struct event_data *) (ev->data.ptr);
-    int listen_sock = ev_data->listen_fd.sock_fd;
+    int listen_sock = ev_data->listen_fd->sock_fd;
 
     if ((ev->events & EPOLLERR) || (ev->events & EPOLLHUP)
             || (!(ev->events & EPOLLIN))) {
@@ -1261,7 +1261,7 @@ void handle_event(int efd, struct epoll_event *ev, int sfd_http, int sfd_tls) {
          means one or more incoming connections. */
 
         bool is_tls = (sfd_tls == listen_sock);
-        int sfd = ev_data->listen_fd.sock_fd;
+        int sfd = ev_data->listen_fd->sock_fd;
         if (handle_new_connection(efd, ev, sfd, is_tls) < 0) {
             free_connection_info(ev_data->conn_info);
             ev->data.ptr = NULL;
@@ -1567,14 +1567,20 @@ int set_up_socket_listener(char *port_str) {
  */
 int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
     int s;
+    struct fd_ctx *fd = NULL;
 
     e->data.ptr = calloc(1, sizeof(struct event_data));
     if (e->data.ptr == NULL) {
         perror("calloc");
-        return -1;
+        goto error;
     }
 
-    ((struct event_data *) e->data.ptr)->listen_fd.sock_fd = sfd;
+    fd = init_fd_ctx(sfd, false, false);
+    if (fd == NULL) {
+        goto error;
+    }
+
+    ((struct event_data *) e->data.ptr)->listen_fd = fd;
 
     e->events = EPOLLIN | EPOLLET;
     s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, e);
@@ -1584,6 +1590,21 @@ int init_listen_event_data(struct epoll_event *e, int efd, int sfd) {
     }
 
     return 0;
+
+error:
+    free(fd);
+    free(e->data.ptr);
+    return -1;
+}
+
+void free_listen_event_data(struct epoll_event *e) {
+    if (e == NULL) {
+        return;
+    }
+    if (e->data.ptr) {
+        free_fd_ctx(((struct event_data *) e->data.ptr)->listen_fd);
+        free(e->data.ptr);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -1685,12 +1706,12 @@ finish:
     close_fd_if_valid(efd);
     close_fd_if_valid(sfd_http);
     free(events);
-    free(event_http.data.ptr);
+    free_listen_event_data(&event_http);
     free(error_page_buf);
 
 #if ENABLE_HTTPS
     close_fd_if_valid(sfd_tls);
-    free(event_tls.data.ptr);
+    free_listen_event_data(&event_tls);
     free_ssl();
 #endif
 

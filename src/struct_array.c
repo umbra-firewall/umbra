@@ -24,7 +24,6 @@ struct_array_t *struct_array_new() {
 
 void struct_array_free(struct_array_t *sa, bool free_members) {
     if (sa == NULL) {
-        log_dbg("Tried to free NULL array\n");
         return;
     }
 
