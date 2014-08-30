@@ -220,7 +220,7 @@ error:
  * then a new one is created. NULL is returned if the maximum number of sessions
  * exist already. */
 struct session *get_conn_session(struct connection_info *conn_info) {
-    if (conn_info->session == NULL) {
+    if (is_session_entry_clear(conn_info->session)) {
         conn_info->session = new_session();
     }
     return conn_info->session;
@@ -283,7 +283,7 @@ void clear_session(struct session *sess) {
 
 /* Returns whether session entry is ununsed */
 bool is_session_entry_clear(struct session *sess) {
-    return sess->session_id[0] == 0;
+    return sess == NULL || sess->session_id[0] == 0;
 }
 
 /* Sets expiration time to next session expiration time */
@@ -403,9 +403,7 @@ int add_set_cookie_header(struct event_data *ev_data) {
     return 0;
 
 error:
-    if (header_value) {
-        bytearray_free(header_value);
-    }
+    bytearray_free(header_value);
     cancel_connection(ev_data);
     return -1;
 }

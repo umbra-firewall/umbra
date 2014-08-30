@@ -717,6 +717,11 @@ int handle_client_server_event(struct epoll_event *ev) {
     event_t type = ev_data->type;
     bytearray_t *headers_cache = ev_data->headers_cache;
 
+    /* Set session to NULL if it has expired */
+    if (is_session_entry_clear(ev_data->conn_info->session)) {
+        ev_data->conn_info->session = NULL;
+    }
+
     /* Reset conn info if already processed a response */
     if (type == CLIENT_LISTENER
             && ev_data->conn_info->server_ev_data->msg_begun) {
@@ -1092,6 +1097,12 @@ int check_send_csrf_js_snippet(struct event_data *ev_data) {
         int s;
         char js_snippet[INSERT_HIDDEN_TOKEN_JS_STRLEN + 10];
         char header_buf[20];
+
+        if (is_session_entry_clear(ev_data->conn_info->session)) {
+            log_warn("Tried to send JS snippet, but session expired\n");
+            goto error;
+        }
+
         int snippet_len = snprintf(js_snippet, sizeof(js_snippet),
                 INSERT_HIDDEN_TOKEN_JS_FORMAT,
                 ev_data->conn_info->session->session_id);
