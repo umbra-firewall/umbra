@@ -26,19 +26,22 @@ void find_session_from_cookie(struct event_data *ev_data) {
     char *sess_id = extract_sessid_parse_cookie(
             ev_data->cookie_header_value_ref->data,
             ev_data->cookie_header_value_ref->len, ev_data);
-    ev_data->found_shim_session_cookie = (sess_id != NULL);
 
-    if (!ev_data->found_shim_session_cookie) {
+    /* Check if cookie exists */
+    if (sess_id == NULL) {
         log_trace("SESSION_ID not found in HTTP request\n");
         return;
     }
 
+    /* Check that cookie has correct length */
     size_t sess_id_len = strlen(sess_id);
     if (sess_id_len != SHIM_SESSID_LEN) {
         log_warn("Found SESSION_ID with length %zd instead of expected %d\n",
                 sess_id_len, SHIM_SESSID_LEN);
-        cancel_connection(ev_data);
+        return;
     }
+
+    ev_data->found_shim_session_cookie = true;
 
     ev_data->conn_info->session = search_session(sess_id);
 
@@ -89,6 +92,12 @@ char *extract_sessid_parse_cookie(char *cookie_header_value,
             tok += SHIM_SESSID_NAME_STRLEN + 1;
             if (*tok == '"') {
                 tok++;
+
+                /* Set last quote to NUL if it exists */
+                char *last_quote = strchr(tok, '"');
+                if (last_quote) {
+                    *last_quote = '\0';
+                }
             }
             ret = tok;
             bytearray_free(ba);
@@ -220,7 +229,7 @@ error:
  * then a new one is created. NULL is returned if the maximum number of sessions
  * exist already. */
 struct session *get_conn_session(struct connection_info *conn_info) {
-    if (conn_info->session == NULL) {
+    if (is_session_entry_clear(conn_info->session)) {
         conn_info->session = new_session();
     }
     return conn_info->session;
@@ -283,7 +292,7 @@ void clear_session(struct session *sess) {
 
 /* Returns whether session entry is ununsed */
 bool is_session_entry_clear(struct session *sess) {
-    return sess->session_id[0] == 0;
+    return sess == NULL || sess->session_id[0] == 0;
 }
 
 /* Sets expiration time to next session expiration time */
@@ -403,9 +412,7 @@ int add_set_cookie_header(struct event_data *ev_data) {
     return 0;
 
 error:
-    if (header_value) {
-        bytearray_free(header_value);
-    }
+    bytearray_free(header_value);
     cancel_connection(ev_data);
     return -1;
 }
