@@ -41,7 +41,7 @@ shim: CFLAGS := $(CFLAGS_RELEASE)
 trace: shim-trace
 shim-trace: CFLAGS := $(CFLAGS_TRACE)
 shim-trace: $(SHIM_OBJ) trace.c
-	$(CC) $(CFLAGS_DEBUG) $^ -o $@
+	$(CC) $(CFLAGS_DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BIN_NORMAL): $(SHIM_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
