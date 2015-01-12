@@ -3,6 +3,16 @@ Umbra
 
 Acts as a security shim between a webserver and the outside world.
 
+## Requirements
+
+Requires gcc, make, python2.7, and check (for unit tests)
+
+These can be installed on Ubuntu with:
+
+```
+sudo apt-get install build-essential check python
+```
+
 ## Configuration
 
 Set up JSON configuration file at `config/config.json`. You may want to use
@@ -10,19 +20,29 @@ Set up JSON configuration file at `config/config.json`. You may want to use
 
 ## Building
 
-	cd src
-	make
+    cd src
+    make
 
 ## Usage
 
-`./shim SHIM_PORT SERVER_PORT [ERROR_PAGE]`
+    Usage: ./shim-trace <REQUIRED ARGUMENTS> [OPTIONAL ARGUMENTS]
 
-SHIM_PORT is the port that the shim listens on externally.
+    Required arguments:
+    --shim-http-port      HTTP port on which shim should listen
+    --server-http-port    port of listening HTTP server
+    --shim-tls-port       HTTPS port on which shim should listen
+    --server-tls-port     port of listening HTTPS server
+    --tls-cert            PEM file with TLS certificate chain
+    --tls-key             PEM file with server private key
 
-SERVER_PORT is the port that the shim expects the HTTP server to be listening on.
+    Optional arguments:
+    --error-page          file containing contents for error page
+    --server-host         IP address or hostname of webserver. Defaults to localhost.
+    --print-config        Print compiled in configuration data
 
-ERROR_PAGE is an optional argument which may serve as the error page. If not provided, a default one will be used.
 
 ## Example Usage
 
-    ./shim 8080 8000
+    ./shim --shim-http-port 8080 --server-http-port 8000 \
+        --shim-tls-port 8443 --server-tls-port 4430 \
+        --tls-cert server.crt.pem --tls-key server.key.pem
