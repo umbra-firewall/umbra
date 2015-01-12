@@ -253,6 +253,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd,
     int s;
     struct epoll_event client_event = {0}, server_event = {0};
     struct connection_info *conn_info;
+    char *server_port_str = is_tls ? server_tls_port_str : server_http_port_str;
 
     while (1) {
         struct sockaddr in_addr;
@@ -293,7 +294,7 @@ int handle_new_connection(int efd, struct epoll_event *ev, int sfd,
         }
 
         /* Create proxy socket to server */
-        outfd = create_and_connect(server_http_port_str);
+        outfd = create_and_connect(server_port_str);
         if (outfd < 0) {
             goto error;
         }
@@ -705,7 +706,7 @@ int flush_server_event(struct event_data *server_ev_data) {
     return 0;
 }
 
-/* Handles incoming client requests.
+/* Handles incoming client and server requests.
  * Returns boolean indicated if connection is done */
 int handle_client_server_event(struct epoll_event *ev) {
     int done = 0;
@@ -1356,7 +1357,7 @@ int init_ssl_ctx() {
 
     /* Initialize client context */
     ssl_ctx_client = SSL_CTX_new(TLSv1_client_method());
-    if (ssl_ctx_server == NULL) {
+    if (ssl_ctx_client == NULL) {
         log_ssl_error("Client SSL_CTX_new() failed\n");
         return -1;
     }

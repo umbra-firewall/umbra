@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include "log.h"
+#include "net_util.h"
 #include "shim_struct.h"
 
 #ifdef TRACE
@@ -19,10 +20,12 @@ struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         goto fail;
     }
 
+    /* Incoming socket */
     if ((in_fd_ctx = init_fd_ctx(infd, in_is_tls, true)) == NULL) {
         goto fail;
     }
 
+    /* Outgoing socket */
     if ((out_fd_ctx = init_fd_ctx(outfd, out_is_tls, false)) == NULL) {
         goto fail;
     }
@@ -105,6 +108,8 @@ struct fd_ctx *init_fd_ctx(int sock_fd, bool is_tls, bool is_server) {
                 goto error;
             }
         }
+
+        log_trace("%s succeeded\n", func_name);
     }
 #endif
 
@@ -113,19 +118,24 @@ struct fd_ctx *init_fd_ctx(int sock_fd, bool is_tls, bool is_server) {
 #if ENABLE_HTTPS
 error:
     SSL_free(fd_ctx->ssl);
+    free(fd_ctx);
     return NULL;
 #endif
 }
 
 /* Free memory associated with fd_ctx */
 void free_fd_ctx(struct fd_ctx *fd_ctx) {
+    if (fd_ctx == NULL) {
+        return;
+    }
 #if ENABLE_HTTPS
-    if (fd_ctx != NULL) {
-        if (fd_ctx->ssl) {
-            SSL_free(fd_ctx->ssl);
-        }
+    if (fd_ctx->ssl) {
+        SSL_shutdown(fd_ctx->ssl);
+        SSL_free(fd_ctx->ssl);
     }
 #endif
+
+    close_fd_if_valid(fd_ctx->sock_fd);
 
     free(fd_ctx);
 }
@@ -341,18 +351,10 @@ void free_connection_info(struct connection_info *ci) {
     if (ci != NULL) {
         log_trace("Freeing conn info %p (%d total)\n", ci, --num_conn_infos);
         if (ci->client_ev_data) {
-            int listen_fd = ci->client_ev_data->listen_fd->sock_fd;
-            if (listen_fd && close(listen_fd) != 0) {
-                perror("close");
-            }
-
+            /* Free fd_ctx's here because both event_data's reference both and
+             * we want to avoid a double free.
+             */
             free_fd_ctx(ci->client_ev_data->listen_fd);
-
-            int send_fd = ci->client_ev_data->send_fd->sock_fd;
-            if (send_fd && close(send_fd) != 0) {
-                perror("close");
-            }
-
             free_fd_ctx(ci->client_ev_data->send_fd);
 
             free_event_data(ci->client_ev_data);

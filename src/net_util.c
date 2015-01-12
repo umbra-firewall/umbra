@@ -140,6 +140,19 @@ int sendall(struct fd_ctx *fd_ctx, const void *buf, size_t len) {
             sent_bytes = SSL_write(fd_ctx->ssl, buf, len);
             if (sent_bytes <= 0) {
                 int error = SSL_get_error(fd_ctx->ssl, sent_bytes);
+
+                /* Check for clean shutdown */
+                if (sent_bytes == 0) {
+                    if (SSL_get_shutdown(fd_ctx->ssl) & SSL_RECEIVED_SHUTDOWN) {
+                        log_trace("  Got SSL_RECEIVED_SHUTDOWN\n");
+                        return 0;
+                    }
+                    if (error == SSL_ERROR_ZERO_RETURN) {
+                        log_trace("  Got SSL_ERROR_ZERO_RETURN\n");
+                        return 0;
+                    }
+                }
+
                 if (error == SSL_ERROR_WANT_READ
                         || error == SSL_ERROR_WANT_WRITE) {
                     log_dbg("Got SSL EAGAIN during sendall; retrying\n");
@@ -192,6 +205,21 @@ int fd_ctx_read(struct fd_ctx *fd_ctx, char *buf, size_t len, bool *eagain) {
         if (rc <= 0) {
             /* Possible error */
             int err = SSL_get_error(fd_ctx->ssl, rc);
+
+            /* Check for clean shutdown */
+            if (rc == 0) {
+                if (SSL_get_shutdown(fd_ctx->ssl) & SSL_RECEIVED_SHUTDOWN) {
+                    log_trace("  Got SSL_RECEIVED_SHUTDOWN\n");
+                    *eagain = false;
+                    return 0;
+                }
+                if (err == SSL_ERROR_ZERO_RETURN) {
+                    log_trace("  Got SSL_ERROR_ZERO_RETURN\n");
+                    *eagain = false;
+                    return 0;
+                }
+            }
+
             if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
                 *eagain = true;
                 return rc;
