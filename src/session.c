@@ -355,8 +355,9 @@ int populate_set_cookie_header_value(char *buf, size_t buf_len,
     char *token = sess->session_id;
     log_dbg("Sending SESSION_ID: %s\n", token);
 
+    char *secure_suffix = ev_data->send_fd->is_tls ? SECURE_COOKIE_SUFFIX : "";
     int output_len = snprintf(buf, buf_len, SET_COOKIE_HEADER_VALUE_FORMAT,
-            token);
+            token, secure_suffix);
     if (output_len >= buf_len || output_len < 0) {
         return -1;
     }

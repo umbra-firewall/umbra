@@ -16,10 +16,12 @@
 #define SET_COOKIE_HEADER_VALUE_FORMAT \
         SHIM_SESSID_NAME "=%s; " \
         "max-age=" XSTR(SESSION_LIFE_SECONDS) "; " \
-        "path=/"
+        "path=/%s"
+#define SECURE_COOKIE_SUFFIX "; secure"
 
 #define ESTIMATED_SET_COOKIE_HEADER_VALUE_LEN \
-    (sizeof(SET_COOKIE_HEADER_VALUE_FORMAT) + SHIM_SESSID_LEN)
+    (sizeof(SET_COOKIE_HEADER_VALUE_FORMAT) + sizeof(SECURE_COOKIE_SUFFIX) \
+            + SHIM_SESSID_LEN)
 
 #define MAX_HTTP_RESPONSE_HEADERS_SIZE 8096
 
