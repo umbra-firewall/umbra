@@ -12,45 +12,51 @@ import sys
 from copy import deepcopy
 
 
-default_page_conf = None
-
-
 class ConfigValidationException(Exception):
+    """Configuration is not well-formed"""
     pass
 
 
-def is_string(s):
-    return isinstance(s, unicode) or isinstance(s, str)
+def is_string(obj):
+    """Returns true if object is a string-like object"""
+    return isinstance(obj, unicode) or isinstance(obj, str)
 
 
-def is_page(s):
-    return is_string(s) and len(s) > 0 and s[0] == '/'
+def is_page(obj):
+    """Returns true if string-like object is a valid web path"""
+    return is_string(obj) and len(obj) > 0 and obj[0] == '/'
 
 
-def is_list_of(x, typeFunc, minLen=0):
-    if type(x) is not list:
+def is_list_of(list_, type_func, min_len=0):
+    """
+    Returns boolean indicating if list contains only elements of the type
+    checked by type_func.
+    """
+    if type(list_) is not list:
         return False
-    return (reduce(lambda a, b: a and typeFunc(b), x, True)
-            and minLen <= len(x))
+    return (reduce(lambda a, b: a and type_func(b), list_, True)
+            and min_len <= len(list_))
 
 
 def assert_parse(value, msg):
+    """Assert value is true while parsing"""
     if not value:
         raise ConfigValidationException(msg)
 
 
-def c_str_repr(s):
+def c_str_repr(str_):
     """Returns representation of string in C (without quotes)"""
-    def byte_to_repr(c):
-        x = ord(c)
-        if c in ['"', '\\', '\r', '\n']:
+    def byte_to_repr(char_):
+        """Converts byte to C code string representation"""
+        x = ord(char_)
+        if char_ in ['"', '\\', '\r', '\n']:
             return '\\' + chr(x)
         elif ord(' ') <= x <= ord('^') or x == ord('_') or ord('a') <= x <= ord('~'):
             return chr(x)
         else:
             return '\\x%02x' % x
 
-    return '"%s"' % ''.join((byte_to_repr(x) for x in s))
+    return '"%s"' % ''.join((byte_to_repr(x) for x in str_))
 
 
 def dict_updated(d, e):
@@ -360,10 +366,10 @@ class Option:
 
     def getDesc(self):
         s = '%s %s:' % (self.__class__.__name__,
-                self.name)
+                        self.name)
         if hasattr(self, 'value'):
             s += '\nvaluetype=%s,\n value=%s' % (self.value.__class__.__name__,
-                                               repr(self.value))
+                                                 repr(self.value))
         return s
 
     def assrt(self, value, msg):
@@ -473,11 +479,11 @@ class StringArrOption(Option):
     def validate(self):
         self.assrt(is_list_of(self.value, is_string, self.minLen),
                    'Must be list')
-        if self.allowedVals != None:
+        if self.allowedVals is not None:
             self.assrt(set(self.value).issubset(self.allowedVals),
                        'Elements must be in allowed set: %s' %
-                           repr(self.allowedVals))
-        if self.isElementValid != None:
+                       repr(self.allowedVals))
+        if self.isElementValid is not None:
             for x in self.value:
                 self.assrt(self.isElementValid(x), 'Invalid element "%s"' %
                            repr(x))
@@ -521,9 +527,10 @@ class MultiOption(Option):
         if nameVisitOrder != None:
             self.assrt(isinstance(nameVisitOrder, list), "nameVisitOrder must be a list")
             optNames = set((x.name for x in self.getAllOptions()))
+            fmt_args = sorted(nameVisitOrder), sorted(optNames)
             self.assrt(set(nameVisitOrder) == optNames,
-                      "Elements nameVisitOrder do not match names of options\n" +
-                      ("nameVisitOrder=%s, optionNames=%s" % (sorted(nameVisitOrder), sorted(optNames))))
+                       "Elements nameVisitOrder do not match names of options\n" +
+                       ("nameVisitOrder=%s, optionNames=%s" % fmt_args))
         self.nameVisitOrder = nameVisitOrder
 
     def getAllOptionsSorted(self):
@@ -660,7 +667,7 @@ class NamedOptionSet(MultiOption):
         self.valueHasBeenSet = True
         for path, conf in value.items():
             page_conf = MultiOption(self.name + '$' + path, self.requiredConf,
-                                     self.optionalConf)
+                                    self.optionalConf)
             page_conf.setValue(conf.copy())
             self.suboptions[path] = page_conf
             if self.defaultConf != None:
@@ -724,7 +731,7 @@ class ParamsOption(NamedOptionSet):
             self.assrt(is_string(param),
                        'Param "%s" is not valid, must be string' % param)
             self.assrt(not '%' in param, ('Param "%s" is not valid, must not ' % param) +
-                    'contain any percent ("%") signs. Do not URL encode the parameters.')
+                       'contain any percent ("%") signs. Do not URL encode the parameters.')
             param_conf.validate()
 
     def addConfig(self, info):
@@ -761,21 +768,23 @@ class ParamsOption(NamedOptionSet):
 # Configuration specification
 param_conf_required = set()
 param_conf_optional = {
-        PosIntOption('max_param_len'),
-        WhitelistOption('whitelist')
-        }
+    PosIntOption('max_param_len'),
+    WhitelistOption('whitelist')
+}
 
 params_option = ParamsOption('params', param_conf_required, param_conf_optional)
 page_conf_required = set()
+allowedHTTPReq = ['GET', 'POST', 'HEAD', 'PUT', 'DELETE',
+                  'CONNECT', 'TRACE', 'OPTIONS']
 page_conf_optional = {
-        params_option,
-        BoolOption('restrict_params'),
-        HTTPReqsOption('request_types', minLen=1,
-                       allowedVals=['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'CONNECT', 'TRACE', 'OPTIONS']),
-        BoolOption('requires_login'),
-        BoolOption('has_csrf_form'),
-        BoolOption('receives_csrf_form_action')
-        }.union(deepcopy(param_conf_optional))
+    params_option,
+    BoolOption('restrict_params'),
+    HTTPReqsOption('request_types', minLen=1,
+                   allowedVals=allowedHTTPReq),
+    BoolOption('requires_login'),
+    BoolOption('has_csrf_form'),
+    BoolOption('receives_csrf_form_action')
+}.union(deepcopy(param_conf_optional))
 
 default_page_conf_required = {deepcopy(x) for x in page_conf_required.union(page_conf_optional)
                               if x.name not in ['params']}
@@ -783,25 +792,27 @@ default_page_conf_optional = set()
 
 # Update ENABLE_PARAM_CHECKS to depend on parameter options
 enable_options = {
-        BoolOption('enable_header_field_len_check', isTopLevel=True),
-        BoolOption('enable_header_value_len_check', isTopLevel=True),
-        BoolOption('enable_request_type_check', isTopLevel=True),
-        BoolOption('enable_param_len_check', isTopLevel=True),
-        BoolOption('enable_param_whitelist_check', isTopLevel=True),
-        BoolOption('enable_url_directory_traversal_check', isTopLevel=True),
-        BoolOption('enable_csrf_protection', isTopLevel=True),
-        BoolOption('enable_https', isTopLevel=True)
+    BoolOption('enable_header_field_len_check', isTopLevel=True),
+    BoolOption('enable_header_value_len_check', isTopLevel=True),
+    BoolOption('enable_request_type_check', isTopLevel=True),
+    BoolOption('enable_param_len_check', isTopLevel=True),
+    BoolOption('enable_param_whitelist_check', isTopLevel=True),
+    BoolOption('enable_url_directory_traversal_check', isTopLevel=True),
+    BoolOption('enable_csrf_protection', isTopLevel=True),
+    BoolOption('enable_https', isTopLevel=True)
 }
+
 global_conf_required = {
-        PosIntOption('max_header_field_len', isTopLevel=True),
-        PosIntOption('max_header_value_len', isTopLevel=True)
-        }.union(enable_options)
+    PosIntOption('max_header_field_len', isTopLevel=True),
+    PosIntOption('max_header_value_len', isTopLevel=True)
+}.union(enable_options)
+
 global_conf_optional = {
-        StringOption('https_certificate', isTopLevel=True, defaultValue=""),
-        StringOption('https_private_key', isTopLevel=True, defaultValue=""),
-        StringArrOption('successful_login_pages', minLen=1, isTopLevel=True, defaultValue=[]),
-        PosIntOption('max_num_sessions', isTopLevel=True, defaultValue=20),
-        PosIntOption('session_life_seconds', isTopLevel=True, defaultValue=300)
+    StringOption('https_certificate', isTopLevel=True, defaultValue=""),
+    StringOption('https_private_key', isTopLevel=True, defaultValue=""),
+    #StringArrOption('successful_login_pages', minLen=1, isTopLevel=True, defaultValue=[]),
+    PosIntOption('max_num_sessions', isTopLevel=True, defaultValue=20),
+    PosIntOption('session_life_seconds', isTopLevel=True, defaultValue=300)
 }
 
 default_page_conf = DefaultPageConfOption(
@@ -811,12 +822,12 @@ default_page_conf = DefaultPageConfOption(
     params_option)
 
 toplevel_conf = MultiOption('toplevel', {
-        MultiOption('global_config', global_conf_required,
-                    global_conf_optional),
-        default_page_conf,
-        PageConfOption('page_config', page_conf_required, page_conf_optional,
-                       defaultConf=default_page_conf)
-        }, set(), nameVisitOrder=['default_page_config', 'global_config', 'page_config'])
+    MultiOption('global_config', global_conf_required,
+                global_conf_optional),
+    default_page_conf,
+    PageConfOption('page_config', page_conf_required, page_conf_optional,
+                   defaultConf=default_page_conf)
+    }, set(), nameVisitOrder=['default_page_config', 'global_config', 'page_config'])
 
 def comments_removed_read(f):
     ret_lines = []

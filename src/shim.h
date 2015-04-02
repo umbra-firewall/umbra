@@ -30,6 +30,9 @@
 #define MAX_CHUNK_SIZE_LEN 8
 #define READ_BUF_SIZE 4096
 
+#ifdef FRAMA_C
+#include "frama_c_includes.h"
+#endif
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 

@@ -11,8 +11,8 @@
 
 /* Create listening socket and bind to port */
 int create_and_bind(char *port) {
-    struct addrinfo hints;
-    struct addrinfo *result, *rp;
+    struct addrinfo hints = {{0}};
+    struct addrinfo *result = NULL, *rp = NULL;
     int s, sfd;
     int yes = 1;
 

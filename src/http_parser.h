@@ -30,6 +30,9 @@ extern "C" {
 #define HTTP_PARSER_VERSION_PATCH 0
 
 #include <sys/types.h>
+#include <stddef.h>
+#include <stdlib.h>
+
 #if defined(_WIN32) && !defined(__MINGW32__) && (!defined(_MSC_VER) || _MSC_VER<1600)
 #include <BaseTsd.h>
 #include <stddef.h>
@@ -43,6 +46,10 @@ typedef __int64 int64_t;
 typedef unsigned __int64 uint64_t;
 #else
 #include <stdint.h>
+#endif
+
+#ifdef FRAMA_C
+#include "frama_c_includes.h"
 #endif
 
 /* Compile with -DHTTP_PARSER_STRICT=0 to make less checks, but run
@@ -80,8 +87,12 @@ typedef struct http_parser_settings http_parser_settings;
  * many times for each string. E.G. you might get 10 callbacks for "on_url"
  * each providing just a few characters more data.
  */
+#ifdef FRAMA_C
+// Nothing
+#else
 typedef int (*http_data_cb) (http_parser*, const char *at, size_t length);
 typedef int (*http_cb) (http_parser*);
+#endif
 
 
 /* Request Methods */
@@ -230,6 +241,21 @@ struct http_parser {
 };
 
 
+#ifdef FRAMA_C
+
+struct http_parser_settings {
+  int (*on_message_begin) (http_parser *);
+  int (*on_url) (http_parser *, const char *, size_t);
+  int (*on_status) (http_parser *, const char *, size_t);
+  int (*on_header_field) (http_parser *, const char *, size_t);
+  int (*on_header_value) (http_parser *, const char *, size_t);
+  int (*on_headers_complete) (http_parser *);
+  int (*on_body) (http_parser *, const char *, size_t);
+  int (*on_message_complete) (http_parser *);
+};
+
+#else
+
 struct http_parser_settings {
   http_cb      on_message_begin;
   http_data_cb on_url;
@@ -240,6 +266,8 @@ struct http_parser_settings {
   http_data_cb on_body;
   http_cb      on_message_complete;
 };
+
+#endif
 
 
 enum http_parser_url_fields

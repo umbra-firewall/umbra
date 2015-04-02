@@ -1320,7 +1320,7 @@ int init_page_conf() {
 /* Tries to initialize SSL ctx. Returns 0 on success, -1 otherwise. */
 int init_ssl_ctx() {
     /* Initialize server context */
-    //@Todo(Travis) make the TLS version configurable
+    // @Todo(Travis) make the TLS version configurable
     ssl_ctx_server = SSL_CTX_new(TLSv1_server_method());
     if (ssl_ctx_server == NULL) {
         log_ssl_error("Server SSL_CTX_new() failed\n");
@@ -1463,6 +1463,23 @@ void print_usage(char **argv) {
  * -1 otherwise.
  */
 int parse_program_arguments(int argc, char **argv) {
+
+#ifdef FRAMA_C
+    /* Eliminate static analysis of arguments */
+
+    shim_http_port_str = "8080";
+    server_http_port_str = "8000";
+    shim_tls_port_str = "8443";
+    server_tls_port_str = "4430";
+    tls_cert_file = "server.crt.pem";
+    tls_key_file = "server.key.pem";
+    error_page_file = NULL;
+    server_hostname = "localhost";
+    print_config = false;
+
+    return 0;
+#endif
+
     int c, i;
 
     struct option long_options[] = {
@@ -1638,8 +1655,18 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (signal(SIGINT, sigint_handler) < 0) {
-        perror("signal");
+
+    struct sigaction new_action = {{0}};
+    new_action.sa_handler = sigint_handler;
+    new_action.sa_flags = 0;
+
+    if (sigemptyset(&new_action.sa_mask) == -1) {
+        perror("sigemptyset");
+        goto finish;
+    }
+
+    if (sigaction(SIGINT, &new_action, NULL) == -1) {
+        perror("sigaction");
         goto finish;
     }
 

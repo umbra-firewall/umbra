@@ -10,7 +10,7 @@ SHIM_SRC = shim.c shim.h http_parser.c http_parser.h \
 SHIM_OBJ = shim.o http_parser.o bytearray.o http_callbacks.o session.o \
 	http_util.o net_util.o shim_struct.o config.o struct_array.o \
 	config_printer.o
-LDLIBS = -lssl -lcrypto
+LDLIBS := -lssl -lcrypto
 
 CFILES=$(wildcard *.c)
 DEPS=$(patsubst %.c, .deps/%.d, $(CFILES))
@@ -22,7 +22,7 @@ CC := $(CROSS_COMPILE)$(CC)
 # CFLAGS versions
 CFLAGS += -Wall
 CFLAGS_DEBUG := $(CFLAGS) -g -DDEBUG
-CFLAGS_RELEASE := $(CFLAGS) -O2
+CFLAGS_RELEASE := $(CFLAGS)
 CFLAGS_TRACE := $(CFLAGS) -O0 -finstrument-functions -g -DDEBUG
 
 .PHONY: all debug trace release clean dist-clean

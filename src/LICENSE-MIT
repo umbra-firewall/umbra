@@ -1,3 +1,5 @@
+Umbra uses http_parser.c from Joyent, Inc.
+
 http_parser.c is based on src/http/ngx_http_parse.c from NGINX copyright
 Igor Sysoev.
 
