@@ -3,6 +3,7 @@
 #include "struct_array.h"
 
 
+/* Returns newly allocated struct_array or NULL on error */
 struct_array_t *struct_array_new() {
     struct_array_t *sa = calloc(1, sizeof(struct_array_t));
     if (sa == NULL) {
@@ -22,6 +23,7 @@ struct_array_t *struct_array_new() {
     return sa;
 }
 
+/* Frees each member of struct_array then frees struct_array */
 void struct_array_free(struct_array_t *sa, bool free_members) {
     if (sa == NULL) {
         return;
@@ -38,6 +40,7 @@ void struct_array_free(struct_array_t *sa, bool free_members) {
     free(sa);
 }
 
+/* Appends item to struct_array */
 int struct_array_add(struct_array_t *sa, DATATYPE item) {
     DATATYPE *new_data;
 
@@ -63,6 +66,7 @@ int struct_array_add(struct_array_t *sa, DATATYPE item) {
     return 0;
 }
 
+/* For each element in struct_array, runs function */
 void struct_array_foreach(struct_array_t *sa, void (*func)(DATATYPE)) {
     int i;
 
@@ -75,6 +79,7 @@ void struct_array_foreach(struct_array_t *sa, void (*func)(DATATYPE)) {
     }
 }
 
+/* Removes all elements from struct_array, optionally freeing each member */
 int struct_array_clear(struct_array_t *sa, bool free_members) {
     if (sa == NULL) {
         log_dbg("Tried to clear NULL array\n");
@@ -91,6 +96,7 @@ int struct_array_clear(struct_array_t *sa, bool free_members) {
     return 0;
 }
 
+/* Removes element at index from struct_array */
 int struct_array_remove_element(struct_array_t *sa, int index,
         bool free_element) {
     if (sa == NULL) {
@@ -118,6 +124,9 @@ int struct_array_remove_element(struct_array_t *sa, int index,
     return 0;
 }
 
+/* Returns index of first element such that item == elemeent or -1 if
+ * none is found
+ */
 int struct_array_find_element_idx(struct_array_t *sa, DATATYPE item) {
     int i;
 
@@ -128,6 +137,26 @@ int struct_array_find_element_idx(struct_array_t *sa, DATATYPE item) {
 
     for (i = 0; i < sa->len; i++) {
         if (sa->data[i] == item) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/* Returns index of first element such that is_found returns true or -1 if
+ * none is found
+ */
+int struct_array_find_element_idx_lambda(struct_array_t *sa, is_found_t is_found) {
+    int i;
+
+    if (sa == NULL) {
+        log_dbg("Tried to clear NULL array\n");
+        return -1;
+    }
+
+    for (i = 0; i < sa->len; i++) {
+        if (is_found(sa->data[i])) {
             return i;
         }
     }

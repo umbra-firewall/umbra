@@ -23,17 +23,29 @@
 #define MAX_HTTP_REASON_PHRASE_LEN 200
 
 #define HTTP_RESPONSE_OK \
-    "HTTP/1.0 201 OK\r\n" \
-    "Content-type: text/html\r\n" \
-    "\r\n"
+    "HTTP/1.0 201 OK" CRLF \
+    "Content-type: text/html" CRLF \
+    CRLF
 
 #define HTTP_RESPONSE_FORBIDDEN \
-    "HTTP/1.0 403 Forbidden\r\n" \
-    "Content-type: text/html\r\n" \
-    "Cache-Control: no-cache, no-store, must-revalidate\r\n" \
-    "Pragma: no-cache\r\n" \
-    "Expires: 0\r\n" \
-    "\r\n"
+    "HTTP/1.0 403 Forbidden" CRLF \
+    "Content-type: text/html" CRLF \
+    "Cache-Control: no-cache, no-store, must-revalidate" CRLF \
+    "Pragma: no-cache" CRLF \
+    "Expires: 0" CRLF \
+    CRLF
+
+/* Unique string identifying authorization realm */
+#define BASIC_AUTH_REALM "UmbraShimAuthRealm_vyUPIZ0g1pwZfWecjj"
+
+#define HTTP_UNAUTHORIZED \
+    "HTTP/1.0 401 Unauthorized" CRLF \
+    "Content-type: text/html" CRLF \
+    "Cache-Control: no-cache, no-store, must-revalidate" CRLF \
+    "Pragma: no-cache" CRLF \
+    "Expires: 0" CRLF \
+    "WWW-Authenticate: Basic realm=\"" BASIC_AUTH_REALM "\"" CRLF \
+    CRLF
 
 #define DEFAULT_ERROR_PAGE_STR \
     "<html>" \
@@ -47,6 +59,8 @@
     "</body>" \
     "</html>"
 
+#define BASIC_AUTH_PREFIX "Basic "
+#define BASIC_AUTH_PREFIX_LEN (sizeof(BASIC_AUTH_PREFIX) - 1)
 
 /* Global variables */
 extern char *error_page_buf;
@@ -56,7 +70,7 @@ struct event_data;
 struct fd_ctx;
 
 /* HTTP utility functions */
-int send_error_page(struct fd_ctx *fd_ctx);
+int send_error_page(struct event_data *ev_data);
 int http_parser_method_to_shim(enum http_method method);
 int init_error_page(char *error_page_file);
 bool str_to_url_encoded_memeq(const char *str, char *url_data,

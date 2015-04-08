@@ -29,7 +29,7 @@ int on_headers_complete_cb(http_parser *p) {
         log_dbg("Number of header fields (%zd) does not match number of "
                 "header values (%zd)\n", ev_data->all_header_fields->len,
                 ev_data->all_header_values->len);
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
         return -1;
     }
 
@@ -80,7 +80,7 @@ int on_message_complete_cb(http_parser *p) {
         } else {
             log_warn("Page configured to receive CSRF form action, but no CSRF "
                     "token parameter found\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_INVALID_CSRF_TOKEN);
             return -1;
         }
     }

@@ -17,6 +17,7 @@ char *shim_tls_port_str = NULL, *server_tls_port_str = NULL;
 char *tls_cert_file = NULL, *tls_key_file = NULL;
 char *server_hostname = DEFAULT_SERVER_HOST;
 bool print_config = false;
+char *passwd_filename = NULL;
 
 #if ENABLE_HTTPS
 SSL_CTX *ssl_ctx_server;
@@ -77,7 +78,7 @@ struct page_conf *url_find_matching_page(char *url, size_t len) {
 int update_bytearray(bytearray_t *b, const char *at, size_t length,
         struct event_data *ev_data) {
     if (bytearray_append(b, at, length) < 0) {
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
         log_error("Cancelling request because out of memory\n");
         return -1;
     }
@@ -219,7 +220,7 @@ int check_header_pair(struct event_data *ev_data) {
     return 0;
 
 error:
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 
@@ -352,7 +353,7 @@ void check_request_type(struct event_data *ev_data) {
     int http_method = http_parser_method_to_shim(method);
     if (!(ev_data->conn_info->page_match->request_types & http_method)) {
         log_error("Request type %s not allowed\n", http_method_str(method));
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     }
 }
 
@@ -393,7 +394,7 @@ struct params *find_matching_param(char *name, size_t name_len,
                 &is_valid);
         if (!is_valid) {
             log_warn("Invalid URL encoding\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_INVALID_HTTP);
         }
         if (matches) {
             return &params[i];
@@ -408,7 +409,7 @@ int check_char_whitelist(const char *whitelist, const char c,
         struct event_data *ev_data) {
     if (!whitelist_char_allowed(whitelist, c)) {
         log_info("Character '\\x%02hhx' not allowed\n", c);
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_PARAM_CHARACTER_NOT_ALLOWED);
         return -1;
     }
 
@@ -434,7 +435,7 @@ size_t url_encode_buf_len_whitelist(char *data, size_t len,
 #endif
             } else {
                 log_warn("Invalid URL encoding found during length check\n");
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INVALID_HTTP);
                 return 0;
             }
         } else {
@@ -467,7 +468,7 @@ void check_arg_len_whitelist(struct params *param, char *value,
     if (url_decode_len > param->max_param_len) {
         log_warn("Length of parameter value \"%.*s\" %zd exceeds max %d\n",
                 (int) value_len, value, url_decode_len, param->max_param_len);
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_PARAM_LEN_EXCEEDED);
     }
 }
 
@@ -477,7 +478,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
 
     if (len < 0) {
         log_warn("Malformed argument\n");
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     }
 
     char *name = arg, *value;
@@ -500,7 +501,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
         if (!ev_data->conn_info->session) {
             log_warn("Request did not have a valid session cookie, which "
                     "is required on pages that receive CSRF form action\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_INVALID_CSRF_COOKIE);
             return;
         }
 
@@ -509,7 +510,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
                 || memcmp(value, ev_data->conn_info->session->session_id,
                 SHIM_SESSID_LEN) != 0) {
             log_warn("Invalid CSRF token found\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_INVALID_CSRF_TOKEN);
         } else {
             log_trace("Correct CSRF token found\n");
             ev_data->found_csrf_correct_token = true;
@@ -524,7 +525,7 @@ void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     if (param == NULL) {
         if (page_match->restrict_params) {
             log_warn("Parameter sent when not allowed\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_PARAM_NOT_ALLOWED);
             return;
         } else {
             param = &ev_data->conn_info->default_params;
@@ -643,7 +644,7 @@ int fill_rand_bytes(char *buf, size_t len) {
     return rc;
 }
 
-/* Do checks that are possible after the header is received */
+/* Do checks that are possible after all of the headers are received */
 void do_client_header_complete_checks(struct event_data *ev_data) {
     ev_data->conn_info->page_match = url_find_matching_page(
             (char *) ev_data->url->data,
@@ -669,7 +670,126 @@ void do_client_header_complete_checks(struct event_data *ev_data) {
 #if ENABLE_SESSION_TRACKING
     find_session_from_cookie(ev_data);
 #endif
+
+#if ENABLE_AUTHENTICATION_CHECK
+    /* Check if page requires login */
+    check_page_auth(ev_data);
+#endif
 }
+
+/* Reads file into buffer. Returns number of read bytes on success,
+ * -1 otherwise. */
+ssize_t read_file_to_buf(char *buf, size_t len, const char *filename) {
+    int fd;
+
+    fd = open(filename, O_RDONLY);
+    if (fd == -1) {
+        log_trace("Failed to open password file \"%s\"\n", filename);
+        return -1;
+    }
+
+    size_t read_bytes = read(fd, buf, len);
+    close(fd);
+
+    return read_bytes;
+}
+
+
+#if ENABLE_AUTHENTICATION_CHECK
+
+/* Returns true when Authorization header is found */
+bool is_basic_auth_found(bytearray_t *ba) {
+    const char auth_header_field[] = "Authorization";
+    return strncmp(auth_header_field, ba->data, ba->len) == 0;
+}
+
+/* Prints length and hex encoded string to stdout */
+void print_dbg_str_hex(char *s, size_t len) {
+    printf("len=%zd, \"", len);
+    int i;
+    for (i = 0; i < len; i++) {
+        printf("%02x", s[i]);
+    }
+    printf("\"\n");
+}
+
+
+/* Enforces authentication on pages, using RFC 2617 Basic Auth */
+void check_page_auth(struct event_data *ev_data) {
+    if (!ev_data->conn_info->page_match->requires_login) {
+        log_trace("Page does not require login\n");
+        return;
+    }
+
+    /* Check HTTP Basic Auth headers */
+    log_trace("Page requires login, checking Basic Auth...\n");
+    int auth_header_idx = struct_array_find_element_idx_lambda(
+            ev_data->all_header_fields, is_basic_auth_found);
+
+    if (auth_header_idx == -1) {
+        /* Could not find Authorization header */
+        cancel_connection(ev_data, REASON_NO_AUTH_HEADER);
+        return;
+    }
+
+    /* NUL terminate header value */
+    bytearray_t *auth_value_ref = ev_data->all_header_values->data[auth_header_idx];
+    if (bytearray_nul_terminate(auth_value_ref) < 0) {
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
+    }
+
+    /* Verify that header value is long enough and begins with "Basic " */
+    if (auth_value_ref->len <= BASIC_AUTH_PREFIX_LEN
+            || memcmp(auth_value_ref->data, BASIC_AUTH_PREFIX,
+            BASIC_AUTH_PREFIX_LEN) != 0) {
+        cancel_connection(ev_data, REASON_INVALID_HTTP);
+        return;
+    }
+
+    char *creds = auth_value_ref->data + BASIC_AUTH_PREFIX_LEN;
+    size_t creds_len = auth_value_ref->len - BASIC_AUTH_PREFIX_LEN - 1;
+
+    /* Read passwd file */
+    char expected_creds_buf[MAX_CREDS_BUF_LEN + 1];
+    ssize_t expected_creds_len = read_file_to_buf(expected_creds_buf,
+            sizeof(expected_creds_buf), passwd_filename);
+
+    /* Check if error was returned */
+    if (expected_creds_len == -1) {
+        log_trace("Error reading password file\n");
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
+        return;
+    }
+
+    /* If buffer is completely filled, then file was too large */
+    if (expected_creds_len == sizeof(expected_creds_buf)) {
+        log_trace("Credentials file too large; max size = %zd\n", (size_t) MAX_CREDS_BUF_LEN);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
+        return;
+    }
+
+    /* Strip newlines at end of file */
+    while (expected_creds_len > 0
+            && (expected_creds_buf[expected_creds_len - 1] == '\r'
+                    || expected_creds_buf[expected_creds_len - 1] == '\n')) {
+        expected_creds_len -= 1;
+    }
+
+    /* NUL terminate string */
+    expected_creds_buf[expected_creds_len] = '\0';
+
+    /* Compare given credentials and stored credentials */
+    if (expected_creds_len != creds_len
+            || memcmp(expected_creds_buf, creds, expected_creds_len) != 0) {
+        cancel_connection(ev_data, REASON_INVALID_AUTH_CREDS);
+        log_trace("  expected \"%s\", got \"%s\"\n", expected_creds_buf, creds);
+        return;
+    }
+
+    log_trace("Authorization accepted\n");
+
+}
+#endif
 
 /* Finishes server event if it was not finished previously. Returns 0 on
  * success, -1 otherwise. */
@@ -691,7 +811,7 @@ int flush_server_event(struct event_data *server_ev_data) {
             log_warn("Error during HTTP parsing\n");
             log_warn("%s: %s\n", http_errno_name(hte),
                     http_errno_description(hte));
-            cancel_connection(server_ev_data);
+            cancel_connection(server_ev_data, REASON_INVALID_HTTP);
             return -1;
         }
     }
@@ -760,7 +880,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                 break;
             } else {
                 /* Error occurred reading */
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INVALID_HTTP);
                 done = 1;
                 break;
             }
@@ -776,7 +896,7 @@ int handle_client_server_event(struct epoll_event *ev) {
             log_dbg("Caching message headers\n");
             if (bytearray_append(headers_cache, buf, count) < 0) {
                 log_error("bytearray_append failed\n");
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INTERNAL_ERROR);
                 done = 1;
                 break;
             }
@@ -784,7 +904,7 @@ int handle_client_server_event(struct epoll_event *ev) {
             /* Make safe to use C string funtions on bytearray until modified */
             if (bytearray_nul_terminate(headers_cache) < 0) {
                 log_error("bytearray_nul_terminate failed\n");
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INTERNAL_ERROR);
                 done = 1;
                 break;
             }
@@ -841,7 +961,7 @@ int handle_client_server_event(struct epoll_event *ev) {
                 log_warn("End of Headers not found after %d bytes into "
                         "response; ""aborting\n",
                         MAX_HTTP_RESPONSE_HEADERS_SIZE);
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INVALID_HTTP);
                 done = 1;
                 break;
             }
@@ -874,7 +994,7 @@ int handle_client_server_event(struct epoll_event *ev) {
 
 check_cancelled:
     if (type == CLIENT_LISTENER && is_conn_cancelled(ev_data)) {
-        if (send_error_page(ev_data->listen_fd)) {
+        if (send_error_page(ev_data) != 0) {
             log_info("Failed to send error page.\n");
         }
         close(ev_data->listen_fd->sock_fd);
@@ -1077,7 +1197,7 @@ int handle_chunked_parse_send(char *buf, size_t buf_len,
     return done;
 
 error:
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return 1;
 }
 #endif
@@ -1159,7 +1279,7 @@ int check_send_csrf_js_snippet(struct event_data *ev_data) {
 
 error:
     bytearray_free(send_array);
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return 1;
 }
 #endif
@@ -1202,14 +1322,14 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
     if (hte != HPE_OK) {
         log_warn("Error during HTTP parsing\n");
         log_warn("%s: %s\n", http_errno_name(hte), http_errno_description(hte));
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INVALID_HTTP);
         return 1;
     }
 
     if (ev_data->parser.upgrade) {
         /* Wants to upgrade connection */
         log_warn("HTTP upgrade not supported\n");
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_HTTP_FEATURE_NOT_SUPPORTED);
         return 1;
     }
 
@@ -1246,7 +1366,7 @@ int do_http_parse_send(char *headers_buf, size_t header_buf_len, char *body_buf,
     s = sendall(ev_data->send_fd, body_buf, body_buf_len);
     if (s < 0) {
         log_error("sendall failed\n");
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_NETWORK_ERROR);
         return 1;
     }
 

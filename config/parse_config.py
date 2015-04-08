@@ -869,7 +869,8 @@ def get_toplevel_conf():
         BoolOption('enable_param_whitelist_check', is_top_level=True),
         BoolOption('enable_url_directory_traversal_check', is_top_level=True),
         BoolOption('enable_csrf_protection', is_top_level=True),
-        BoolOption('enable_https', is_top_level=True)
+        BoolOption('enable_https', is_top_level=True),
+        BoolOption('enable_authentication_check', is_top_level=True)
     }
 
     global_conf_required = {
@@ -878,9 +879,6 @@ def get_toplevel_conf():
     }.union(enable_options)
 
     global_conf_optional = {
-        StringOption('https_certificate', is_top_level=True, defaultValue=""),
-        StringOption('https_private_key', is_top_level=True, defaultValue=""),
-        #StringArrOption('successful_login_pages', min_len=1, is_top_level=True, defaultValue=[]),
         PosIntOption('max_num_sessions', is_top_level=True, defaultValue=20),
         PosIntOption('session_life_seconds', is_top_level=True, defaultValue=300)
     }

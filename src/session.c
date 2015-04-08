@@ -117,7 +117,7 @@ char *extract_sessid_parse_cookie(char *cookie_header_value,
 
 error:
     bytearray_free(cookie);
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return NULL;
 }
 
@@ -221,7 +221,7 @@ int add_cookie_name_value(struct event_data *ev_data, bytearray_t *piece) {
 error:
     bytearray_free(na);
     bytearray_free(va);
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 
@@ -349,7 +349,7 @@ int populate_set_cookie_header_value(char *buf, size_t buf_len,
     struct session *sess = get_conn_session(ev_data->conn_info);
     if (sess == NULL) {
         log_error("Could not allocate new session\n");
-        cancel_connection(ev_data);
+        cancel_connection(ev_data, REASON_INTERNAL_ERROR);
         return -1;
     }
     char *token = sess->session_id;
@@ -414,7 +414,7 @@ int add_set_cookie_header(struct event_data *ev_data) {
 
 error:
     bytearray_free(header_value);
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 
@@ -511,7 +511,7 @@ int set_new_content_length(struct event_data *ev_data) {
     return 0;
 
 error:
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 
@@ -587,7 +587,7 @@ int remove_shim_sessid_cookie(struct event_data *ev_data) {
     return 0;
 
 error:
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 

@@ -7,10 +7,27 @@
 char *error_page_buf = NULL;
 size_t error_page_len;
 
-/* Send a error page back on a socket */
-int send_error_page(struct fd_ctx *fd_ctx) {
-    if (sendall(fd_ctx, HTTP_RESPONSE_FORBIDDEN, sizeof(HTTP_RESPONSE_FORBIDDEN))
-            < 0) {
+/* Sends a error page back on a socket given a client ev_data.
+ * Returns 0 on success, -1 otherwise */
+int send_error_page(struct event_data *ev_data) {
+    struct fd_ctx *fd_ctx = ev_data->listen_fd;
+    cancel_reason_t reason = ev_data->cancel_reason;
+
+    char *headers = NULL;
+    size_t headers_len = 0;
+
+    /* Choose response */
+    log_dbg("Reason: %s\n", REASON_NAME(reason));
+    if (cancel_reason_requires_auth(reason)) {
+        headers = HTTP_UNAUTHORIZED;
+        headers_len = sizeof(HTTP_UNAUTHORIZED) - 1;
+    } else {
+        headers = HTTP_RESPONSE_FORBIDDEN;
+        headers_len = sizeof(HTTP_RESPONSE_FORBIDDEN) - 1;
+    }
+
+    /* Send response */
+    if (sendall(fd_ctx, headers, headers_len) < 0) {
         return -1;
     }
     if (sendall(fd_ctx, error_page_buf, error_page_len) < 0) {
@@ -275,7 +292,7 @@ int send_http_headers(struct event_data *ev_data) {
 
 error:
     free(send_buf);
-    cancel_connection(ev_data);
+    cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     return -1;
 }
 

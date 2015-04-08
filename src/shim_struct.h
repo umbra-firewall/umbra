@@ -16,6 +16,43 @@ typedef enum {
     CLIENT_LISTENER, SERVER_LISTENER
 } event_t;
 
+
+#define CANCEL_REASON_MAP(XX) \
+    XX(REASON_NOT_CANCELLED, "Connection is not cancelled") \
+    \
+    XX(REASON_INTERNAL_ERROR, "Internal shim error") \
+    XX(REASON_INVALID_HTTP, "Malformed HTTP message") \
+    XX(REASON_HTTP_FEATURE_NOT_SUPPORTED, "HTTP feature not supported") \
+    XX(REASON_NETWORK_ERROR, "Network error") \
+    \
+    /* Security violations */ \
+    XX(REASON_SECURITY_VIOLATION, "Security violation") \
+    XX(REASON_INVALID_CSRF_TOKEN, "Did not receive valid CSRF token") \
+    XX(REASON_INVALID_CSRF_COOKIE, "Did not receive valid CSRF cookie") \
+    XX(REASON_HTTP_METHOD, "HTTP method not allowed for page") \
+    XX(REASON_PARAM_CHARACTER_NOT_ALLOWED, "Character not allowed in parameter") \
+    XX(REASON_PARAM_LEN_EXCEEDED, "Max parameter length exceeded") \
+    XX(REASON_PARAM_NOT_ALLOWED, "Parameter not in whitelist for page") \
+    XX(REASON_NO_AUTH_HEADER, "No authentication header found") \
+    XX(REASON_INVALID_AUTH_CREDS, "Invalid username/password authorization") \
+    \
+    /* Used to determine if reason is for security */ \
+    XX(REASON_SECURITY_UNUSED, "")
+
+/* Cancel reason enum */
+#define CANCEL_REASON_DESCRIPTION(name, description) name,
+typedef enum {
+    CANCEL_REASON_MAP(CANCEL_REASON_DESCRIPTION)
+} cancel_reason_t;
+#undef CANCEL_REASON_DESCRIPTION
+
+extern const char *cancel_reason_names[];
+extern const char *cancel_reason_descriptions[];
+
+#define REASON_NAME(reason) cancel_reason_names[reason]
+#define REASON_DESCRIPTION(reason) cancel_reason_descriptions[reason]
+
+
 /* Indicates what has been received */
 typedef enum {
     CHUNK_SZ, CHUNK_SZ_LF, CHUNK_BODY, CHUNK_BODY_CR, CHUNK_BODY_LF
@@ -65,6 +102,8 @@ struct event_data {
      * terminated. */
     struct_array_t *all_header_fields;
     struct_array_t *all_header_values;
+
+    cancel_reason_t cancel_reason : 8;
 
     event_t type : 8;
 
@@ -122,6 +161,8 @@ void free_event_data(struct event_data *ev);
 void free_connection_info(struct connection_info *ci);
 void copy_default_params(struct page_conf *page_conf, struct params *params);
 bool is_conn_cancelled(struct event_data *ev_data);
-void cancel_connection(struct event_data *ev_data);
+void cancel_connection(struct event_data *ev_data, cancel_reason_t reason);
+bool cancel_reason_is_security_violation(cancel_reason_t reason);
+bool cancel_reason_requires_auth(cancel_reason_t reason);
 
 #endif

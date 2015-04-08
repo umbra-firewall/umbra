@@ -7,6 +7,21 @@
 int num_conn_infos = 0;
 #endif
 
+/* Array of cancel reason names */
+#define CANCEL_REASON_NAME(name, description) #name,
+const char *cancel_reason_names[] = {
+    CANCEL_REASON_MAP(CANCEL_REASON_NAME)
+};
+#undef CANCEL_REASON_NAME
+
+/* Array of cancel reason descriptions */
+#define CANCEL_REASON_DESCRIPTION(name, description) description,
+const char *cancel_reason_descriptions[] = {
+    CANCEL_REASON_MAP(CANCEL_REASON_DESCRIPTION)
+};
+#undef CANCEL_REASON_DESCRIPTION
+
+
 /* Initialize connection_info structure */
 struct connection_info *init_conn_info(int infd, int outfd, bool in_is_tls,
         bool out_is_tls) {
@@ -257,6 +272,7 @@ void reset_event_data(struct event_data *ev) {
     http_parser_init(&ev->parser, ev->parser.type);
 
     ev->http_msg_newline = NULL;
+    ev->cancel_reason = REASON_NOT_CANCELLED;
 
 #if ENABLE_SESSION_TRACKING
     ev->chunk_state = CHUNK_SZ;
@@ -374,9 +390,27 @@ void copy_default_params(struct page_conf *page_conf, struct params *params) {
 }
 
 /* Set connection to cancelled state */
-void cancel_connection(struct event_data *ev_data) {
-    log_trace("Cancelling connection\n.");
+void cancel_connection(struct event_data *ev_data, cancel_reason_t reason) {
+    /* If already cancelled, then do not change the reason */
+    if (ev_data->is_cancelled) {
+        log_trace("Connection has already been cancelled\n");
+        return;
+    }
+
+    log_trace("Canceling connection:\n");
+    log_trace("  %s: %s\n", REASON_NAME(reason), REASON_DESCRIPTION(reason));
     ev_data->is_cancelled = true;
+    ev_data->cancel_reason = reason;
+}
+
+bool cancel_reason_is_security_violation(cancel_reason_t reason) {
+    return REASON_SECURITY_VIOLATION <= reason &&
+            reason <= REASON_SECURITY_UNUSED;
+}
+
+bool cancel_reason_requires_auth(cancel_reason_t reason) {
+    return REASON_NO_AUTH_HEADER <= reason
+            && reason <= REASON_INVALID_AUTH_CREDS;
 }
 
 /* Returns whether connection is cancelled */

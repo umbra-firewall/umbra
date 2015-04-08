@@ -29,6 +29,7 @@
 #define MAXEVENTS 256
 #define MAX_CHUNK_SIZE_LEN 8
 #define READ_BUF_SIZE 4096
+#define MAX_CREDS_BUF_LEN 1024
 
 #ifdef FRAMA_C
 #include "frama_c_includes.h"
@@ -61,14 +62,16 @@
             required_argument, "PEM file with TLS certificate chain") \
     XX(5, "tls-key", true, ENABLE_HTTPS, tls_key_file, \
             required_argument, "PEM file with server private key") \
+    XX(6, "passwd-file", true, ENABLE_AUTHENTICATION_CHECK, passwd_filename, \
+            required_argument, "file that will contains credentials of the form base64(USER:PASS)") \
     \
     /* Optional args */ \
-    XX(6, "error-page", false, true, error_page_file, \
+    XX(7, "error-page", false, true, error_page_file, \
             required_argument, "file containing contents for error page") \
-    XX(7, "server-host", false, true, server_hostname, \
+    XX(8, "server-host", false, true, server_hostname, \
             required_argument, "IP address or hostname of webserver. " \
             "Defaults to " DEFAULT_SERVER_HOST ".") \
-    XX(8, "print-config", false, true, print_config, \
+    XX(9, "print-config", false, true, print_config, \
             no_argument, "Print compiled in configuration data")
 
 #define GETOPT_OPTIONS_LAMBDA(index, name, required, enabled, var, arg_requirement, description) \
@@ -137,6 +140,7 @@ void check_arg_len_whitelist(struct params *param, char *value,
         size_t value_len, struct event_data *ev_data);
 void check_url_dir_traversal(struct event_data *ev_data);
 int check_header_pair(struct event_data *ev_data);
+void check_page_auth(struct event_data *ev_data);
 
 /* Feature check helpers */
 struct page_conf *url_find_matching_page(char *url, size_t len);
@@ -164,6 +168,7 @@ int handle_chunked_parse_send(char *buf, size_t buf_len,
         http_parser_settings *parser_settings, struct event_data *ev_data);
 int check_send_csrf_js_snippet(struct event_data *ev_data);
 int flush_server_event(struct event_data *server_ev_data);
+bool is_basic_auth_found(bytearray_t *ba);
 
 /* Util functions */
 int fill_rand_bytes(char *buf, size_t len);
@@ -171,5 +176,6 @@ void print_usage(char **argv);
 int set_up_socket_listener(char *port_str);
 int init_listen_event_data(struct epoll_event *e, int efd, int sfd);
 int parse_program_arguments(int argc, char **argv);
+ssize_t read_file_to_buf(char *buf, size_t len, const char *filename);
 
 #endif

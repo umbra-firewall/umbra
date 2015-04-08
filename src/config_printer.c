@@ -113,11 +113,8 @@ void print_configuration() {
     init_config_vars();
 
     printf("** Global Config **\n");
-    print_str_macro(HTTPS_PRIVATE_KEY);
-    print_str_macro(HTTPS_CERTIFICATE);
     print_int_macro(MAX_HEADER_FIELD_LEN);
     print_int_macro(MAX_HEADER_VALUE_LEN);
-    //print_str_arr(successful_login_pages);
     print_int_macro(MAX_NUM_SESSIONS);
     print_int_macro(SESSION_LIFE_SECONDS);
 
@@ -132,6 +129,7 @@ void print_configuration() {
     print_bool_macro(ENABLE_CSRF_PROTECTION);
     print_bool_macro(ENABLE_SESSION_TRACKING);
     print_bool_macro(ENABLE_HTTPS);
+    print_bool_macro(ENABLE_AUTHENTICATION_CHECK);
 
     printf("\n** Global Page Defaults **\n");
     print_page_conf(&default_page_conf, 0);
