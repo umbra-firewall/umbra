@@ -10,13 +10,14 @@
         "enable_url_directory_traversal_check": true,
         "enable_csrf_protection": true,
         "session_life_seconds": 300,
-        "enable_https": false
+        "enable_https": false,
+        "enable_authentication_check": true
     },
 
     "default_page_config": {
         "request_types": ["GET", "HEAD"],
         "restrict_params": false,
-        "requires_login": false,
+        "requires_login": true,
         "has_csrf_form": false,
         "receives_csrf_form_action": false,
 
@@ -27,16 +28,19 @@
     "page_config": {
         "/": {
             "restrict_params": true,
+            "requires_login": false,
             "has_csrf_form": true
         },
         
         "/index.html": {
             "restrict_params": true,
+            "requires_login": false,
             "has_csrf_form": true
         },
         
         "/cgi-bin/login": {
             "request_types": ["POST"],
+            "requires_login": false,
             "params": {
                 "user": {
                     "whitelist": "[a-z0-9_]"

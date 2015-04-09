@@ -605,7 +605,7 @@ void check_url_dir_traversal(struct event_data *ev_data) {
                 data += 3;
             } else {
                 log_warn("Invalid URL encoding found during length check\n");
-                cancel_connection(ev_data);
+                cancel_connection(ev_data, REASON_INVALID_HTTP);
             }
         } else {
             if (*data == '.') {
@@ -616,7 +616,7 @@ void check_url_dir_traversal(struct event_data *ev_data) {
 
         if (num_dots >= 2) {
             log_warn("Possible URL directory traversal blocked\n");
-            cancel_connection(ev_data);
+            cancel_connection(ev_data, REASON_DIR_TRAVERSAL);
             return;
         }
     }

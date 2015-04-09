@@ -120,8 +120,8 @@ int on_header_field_cb(http_parser *p, const char *at, size_t length) {
     if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_FIELD_LEN) {
         log_info("Blocked request because header field length %zd; "
                 "max is %ld\n",
-                length, (long ) MAX_HEADER_FIELD_LEN);
-        cancel_connection(ev_data);
+                length, (long) MAX_HEADER_FIELD_LEN);
+        cancel_connection(ev_data, REASON_OVERSIZED_HEADER_FIELD);
         return -1;
     }
 #endif
@@ -144,8 +144,8 @@ int on_header_value_cb(http_parser *p, const char *at, size_t length) {
     if (ev_data->type == CLIENT_LISTENER && length > MAX_HEADER_VALUE_LEN) {
         log_info("Blocked request because header value length %zd; "
                 "max is %ld\n",
-                length, (long ) MAX_HEADER_VALUE_LEN);
-        cancel_connection(ev_data);
+                length, (long) MAX_HEADER_VALUE_LEN);
+        cancel_connection(ev_data, REASON_OVERSIZED_HEADER_VALUE);
         return -1;
     }
 #endif

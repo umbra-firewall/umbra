@@ -27,6 +27,9 @@ typedef enum {
     \
     /* Security violations */ \
     XX(REASON_SECURITY_VIOLATION, "Security violation") \
+    XX(REASON_OVERSIZED_HEADER_FIELD, "Header field too large") \
+    XX(REASON_OVERSIZED_HEADER_VALUE, "Header value too large") \
+    XX(REASON_DIR_TRAVERSAL, "Attempted directory traversal") \
     XX(REASON_INVALID_CSRF_TOKEN, "Did not receive valid CSRF token") \
     XX(REASON_INVALID_CSRF_COOKIE, "Did not receive valid CSRF cookie") \
     XX(REASON_HTTP_METHOD, "HTTP method not allowed for page") \
