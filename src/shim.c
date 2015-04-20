@@ -1,8 +1,12 @@
 #include <inttypes.h>
 #include <getopt.h>
 #include <errno.h>
+
+#if ENABLE_HTTPS
 #include <openssl/engine.h>
 #include <openssl/conf.h>
+#endif
+
 #include "shim.h"
 #include "config.h"
 #include "http_callbacks.h"

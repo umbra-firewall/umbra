@@ -111,8 +111,11 @@ struct variable_enabled {
 extern char *tls_cert_file;
 extern char *tls_key_file;
 extern char *server_hostname;
+
+#if ENABLE_HTTPS
 extern SSL_CTX* ssl_ctx_server;
 extern SSL_CTX* ssl_ctx_client;
+#endif
 
 
 /* Function prototypes */

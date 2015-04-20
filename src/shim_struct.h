@@ -2,9 +2,13 @@
 #define SHIM_STRUCT_H
 
 #include <stdbool.h>
+
+#if ENABLE_HTTPS
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#endif
+
 #include "bytearray.h"
 #include "struct_array.h"
 #include "shim.h"
