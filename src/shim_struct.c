@@ -328,7 +328,10 @@ void reset_connection_info(struct connection_info *ci) {
         return;
     }
 
+#if ENABLE_SESSION_TRACKING
     ci->session = NULL;
+#endif
+
     ci->page_match = NULL;
 
     reset_event_data(ci->client_ev_data);

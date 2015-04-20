@@ -842,10 +842,12 @@ int handle_client_server_event(struct epoll_event *ev) {
     event_t type = ev_data->type;
     bytearray_t *headers_cache = ev_data->headers_cache;
 
+#if ENABLE_SESSION_TRACKING
     /* Set session to NULL if it has expired */
     if (is_session_entry_clear(ev_data->conn_info->session)) {
         ev_data->conn_info->session = NULL;
     }
+#endif
 
     /* Reset conn info if already processed a response */
     if (type == CLIENT_LISTENER

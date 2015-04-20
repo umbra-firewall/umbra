@@ -144,9 +144,12 @@ struct event_data {
 struct connection_info {
     struct event_data *client_ev_data;
     struct event_data *server_ev_data;
-    struct session *session;
     struct params default_params;
     struct page_conf *page_match;
+
+#if ENABLE_SESSION_TRACKING
+    struct session *session;
+#endif
 };
 
 
