@@ -1,7 +1,8 @@
 Umbra
 =====
 
-Acts as a security shim between a webserver and the outside world.
+Acts as an HTTP firewall between a webserver and the outside world. Umbra
+targets embedded devices.
 
 ## Requirements
 
