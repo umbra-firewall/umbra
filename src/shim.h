@@ -46,6 +46,7 @@
 #define MAX_CHUNK_SIZE_LEN 8
 #define READ_BUF_SIZE 4096
 #define MAX_CREDS_BUF_LEN 1024
+#define MAX_HTTP_ARG_LEN (1024 * 1024 * 1024)
 
 #ifdef FRAMA_C
 #include "frama_c_includes.h"

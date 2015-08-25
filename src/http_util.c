@@ -76,20 +76,26 @@ int init_error_page(char *error_page_file) {
         return 0;
     } else {
         FILE *f = fopen(error_page_file, "r");
+
         if (f == NULL) {
             log_error("Failed to open error page file \"%s\"\n",
                     error_page_file);
             perror("fopen");
             goto error;
         }
+
         if (fseek(f, 0, SEEK_END) < 0) {
             perror("fseek");
             goto error;
         }
-        if ((error_page_len = ftell(f)) < 0) {
+
+        long ftell_result;
+        if ((ftell_result = ftell(f)) < 0) {
             perror("ftell");
             goto error;
         }
+        error_page_len = (size_t) ftell_result;
+
         if (fseek(f, 0, SEEK_SET) < 0) {
             perror("fseek");
             goto error;

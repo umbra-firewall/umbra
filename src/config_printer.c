@@ -57,7 +57,8 @@ static void print_http_req_field(int r) {
     print_http_req_part(CONNECT);
 }
 
-void print_whitelist(const char *w) {
+/* Print whitelist as a bitfield */
+void print_whitelist_bitfield(const char *w) {
     int i;
     for (i = 0; i < WHITELIST_PARAM_LEN; i++) {
         printf("%02hhx", w[i]);
@@ -67,11 +68,12 @@ void print_whitelist(const char *w) {
     }
 }
 
-static void print_whitelist2(const char *w) {
-    int i;
-    for (i = 0; i < 256; i++) {
+/* Print value of bytes that are allowed in whitelist */
+static void print_whitelist_as_value_list(const char *w) {
+    unsigned int i;
+    for (i = 0x0; i <= 0xff; i++) {
         if (whitelist_char_allowed(w, i)) {
-            printf("%02hhx ", i);
+            printf("%02hhx ", (unsigned char) i);
         }
     }
 }
@@ -81,9 +83,9 @@ static void print_whitelist2(const char *w) {
 #define print_str_field(item) printf_indent(depth + 1, "." #item " = \"%.*s\"\n", \
         WHITELIST_PARAM_LEN, p->item)
 #define print_whitelist_field(item) printf_indent(depth + 1, "." #item " = "); \
-        print_whitelist(p->item) ; printf("\n")
+        print_whitelist_bitfield(p->item) ; printf("\n")
 #define print_whitelist2_field(item) printf_indent(depth + 1, "." #item " = "); \
-        print_whitelist2(p->item) ; printf("\n")
+        print_whitelist_as_value_list(p->item) ; printf("\n")
 #define print_int_field(item) printf_indent(depth + 1, "." #item " = %d\n", \
         p->item)
 #define print_http_req_field(item) printf_indent(depth + 1, "." #item " = "); \

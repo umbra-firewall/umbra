@@ -7,3 +7,6 @@ shim-trace
 shim-dbg
 config.h
 config.c
+
+# infer output directory
+infer-out

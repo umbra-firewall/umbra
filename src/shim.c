@@ -496,7 +496,7 @@ void check_arg_len_whitelist(struct params *param, char *value,
 void check_single_arg(struct event_data *ev_data, char *arg, size_t len) {
     log_dbg("arg=\"%.*s\", len=%zd\n", (int) len, arg, len);
 
-    if (len < 0) {
+    if (len > MAX_HTTP_ARG_LEN) {
         log_warn("Malformed argument\n");
         cancel_connection(ev_data, REASON_INTERNAL_ERROR);
     }
@@ -587,7 +587,7 @@ void check_buffer_params(bytearray_t *buf, bool is_url_param,
     /* Examine each query parameter */
     char *next = memchr(query, '&', query_len);
     size_t arg_len;
-    while (query_len >= 0) {
+    while (true) {
         arg_len = next ? (next - query) : query_len;
 
         check_single_arg(ev_data, query, arg_len);
